@@ -17,6 +17,7 @@ import { PasteUrlCard, RecentPlayedCard } from "./HomeFeatureCards";
 import { PlaylistsRow, SimilarRow, RecentlyAddedRow, ArtistsRow, PodcastsRow } from "./HomeDiscoveryRows";
 import HomeCategorySwiper from "./HomeCategorySwiper";
 import AnalogClock from "./AnalogClock";
+import MoviesRow from "./MoviesRow";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -24,6 +25,7 @@ import AnalogClock from "./AnalogClock";
 // Points at your deployed b24music backend. Swap this for an env/config
 // value later if you need different URLs for dev vs. production builds.
 import { authedHeaders } from "./apiClient";
+import { getCurrentUser, getShareInbox } from "./shareClient";
 
 const API_BASE = "https://gateway-cah4.onrender.com";
 
@@ -51,7 +53,7 @@ const DRAWER_TILES = [
 // this screen doesn't assume any particular navigation library - wire them
 // up to whatever you're using (React Navigation, a simple state switch,
 // etc.) from the parent.
-export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPress, onPasteLinkPress, onSettingsPress, onRecentPress, onAIChatPress, nowPlaying, engine }) {
+export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPress, onPasteLinkPress, onSettingsPress, onRecentPress, onAIChatPress, onInboxPress, nowPlaying, engine }) {
   const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -159,6 +161,24 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
     fetchTrending();
   }, []);
 
+  const [unseenShareCount, setUnseenShareCount] = useState(0);
+
+  // Unread shared-track count for the inbox badge. Best-effort - if this
+  // fails silently, the badge just won't show; SharedInboxScreen itself
+  // surfaces any real error when opened.
+  useEffect(() => {
+    (async () => {
+      try {
+        const u = await getCurrentUser();
+        if (!u?.id) return;
+        const list = await getShareInbox(u.id, { unseenOnly: true, app: "music" });
+        setUnseenShareCount(list.length);
+      } catch (e) {
+        // non-critical
+      }
+    })();
+  }, []);
+
   const onRefresh = () => {
     setRefreshing(true);
     setOffset(0);
@@ -238,6 +258,16 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
             <TouchableOpacity style={styles.iconButton} onPress={onAIChatPress}>
               <Ionicons name="sparkles" size={16} color="#fff" />
             </TouchableOpacity>
+            <TouchableOpacity style={styles.iconButton} onPress={onInboxPress}>
+              <Ionicons name="mail-outline" size={16} color="#fff" />
+              {unseenShareCount > 0 && (
+                <View style={styles.inboxBadge}>
+                  <Text style={styles.inboxBadgeText}>
+                    {unseenShareCount > 9 ? "9+" : unseenShareCount}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
             <TouchableOpacity style={styles.iconButton} onPress={onRecentPress}>
               <AnalogClock size={18} color="#fff" />
             </TouchableOpacity>
@@ -276,6 +306,7 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
         <RecentlyAddedRow onTrackPress={onTrackPress} />
         <ArtistsRow onTrackPress={onTrackPress} />
         <PodcastsRow onTrackPress={onTrackPress} />
+        <MoviesRow />
 
         {/* ---------- Quick-access strip hinting at the Glass Drawer ---------- */}
         <Text style={styles.sectionTitle}>More</Text>
@@ -351,6 +382,7 @@ const styles = StyleSheet.create({
   avatarInitial: { color: "#fff", fontWeight: "700", fontSize: 16 },
   greeting: { color: "#fff", fontSize: 20, fontWeight: "700" },
   iconButton: {
+    position: "relative",
     paddingHorizontal: 14,
     height: 40,
     borderRadius: 20,
@@ -361,6 +393,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   iconGlyph: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  inboxBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#FF6B6B",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  inboxBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
 
   chipRow: { marginBottom: 20 },
   chip: {

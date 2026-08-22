@@ -9,6 +9,8 @@ import {
   Alert,
   Image,
   TextInput,
+  ScrollView,
+  Switch,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -17,13 +19,52 @@ import * as ImagePicker from "expo-image-picker";
 import appJson from "./app.json";
 import { uploadAvatar, updateUsername, updateBio } from "./apiClient";
 
-const ACCENT = "#B983FF";
-const GLASS_BG = "rgba(255,255,255,0.14)";
-const GLASS_BORDER = "rgba(255,255,255,0.25)";
+/* settings_redesign_patch_v2 - sectioned list layout, dark theme kept */
+const ACCENT = "#E8A662"; // amber - matches Inbox/ShareThread accent
+const BG_TOP = "#170F14";
+const BG_BOTTOM = "#2A1A18";
+const GLASS_BG = "rgba(255,255,255,0.06)";
+const GLASS_BORDER = "rgba(255,255,255,0.10)";
+const DESTRUCTIVE = "#E8654F"; // warm terracotta-red, not generic red
+const GOOD = "#7AC547";
+const MUTED = "rgba(255,255,255,0.45)";
 
 const APP_VERSION = appJson.expo.version;
 
-export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpdate } = {}) {
+// ---------------------------------------------------------------------------
+// Reusable list row - icon box on the left, title/subtitle in the middle,
+// and whatever goes on the right (chevron, a static value, a Switch, or a
+// spinner). This is the sectioned-list pattern from the mockup, just
+// dark-themed instead of the light mint version.
+// ---------------------------------------------------------------------------
+function SettingsRow({ icon, title, subtitle, right, onPress, disabled }) {
+  const Wrapper = onPress ? TouchableOpacity : View;
+  return (
+    <Wrapper
+      style={[styles.row, disabled && styles.rowDisabled]}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.7}
+    >
+      <View style={styles.rowLeft}>
+        <View style={styles.rowIcon}>
+          <Ionicons name={icon} size={18} color={ACCENT} />
+        </View>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle}>{title}</Text>
+          {!!subtitle && <Text style={styles.rowSubtitle}>{subtitle}</Text>}
+        </View>
+      </View>
+      {right}
+    </Wrapper>
+  );
+}
+
+function SectionTitle({ children }) {
+  return <Text style={styles.sectionTitle}>{children}</Text>;
+}
+
+export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpdate, onBackPress } = {}) {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError] = useState(null);
 
@@ -156,21 +197,42 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
 
   return (
     <View style={styles.root}>
-      <LinearGradient colors={["#1c1730", "#2e2350"]} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={[BG_TOP, BG_BOTTOM]} style={StyleSheet.absoluteFill} />
 
       <View style={styles.header}>
+        {!!onBackPress && (
+          <TouchableOpacity style={styles.backButton} onPress={onBackPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="chevron-back" size={22} color={ACCENT} />
+          </TouchableOpacity>
+        )}
         <Text style={styles.title}>Settings</Text>
       </View>
 
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* ---------- Profile card: avatar upload, username, bio ---------- */}
         {authUser && (
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>Profile</Text>
+          <View style={styles.profileCard}>
+            <Text style={styles.profileLabel}>Profile</Text>
 
             <View style={styles.profileRow}>
-              <TouchableOpacity onPress={pickAndUploadAvatar} disabled={avatarUploading}>
+              <TouchableOpacity
+                onPress={pickAndUploadAvatar}
+                disabled={avatarUploading}
+                style={styles.avatarRing}
+              >
                 {authUser.avatar_url ? (
-                  <Image source={{ uri: authUser.avatar_url }} style={styles.avatar} />
+                  <Image
+                    source={{ uri: authUser.avatar_url }}
+                    style={styles.avatar}
+                    onLoad={() => console.log("[avatar_debug] loaded ok:", authUser.avatar_url)}
+                    onError={(e) =>
+                      console.log(
+                        "[avatar_debug] load FAILED:",
+                        authUser.avatar_url,
+                        e.nativeEvent.error
+                      )
+                    } /* avatar_debug_patch */
+                  />
                 ) : (
                   <View style={[styles.avatar, styles.avatarPlaceholder]}>
                     <Text style={styles.avatarPlaceholderText}>
@@ -183,6 +245,9 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
                     <ActivityIndicator color="#fff" size="small" />
                   </View>
                 )}
+                <View style={styles.avatarBadge}>
+                  <Ionicons name="camera" size={12} color="#0B0B0D" />
+                </View>
               </TouchableOpacity>
 
               <View style={styles.profileInfo}>
@@ -201,7 +266,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
                     ) : (
                       <>
                         <TouchableOpacity onPress={saveUsername}>
-                          <Ionicons name="checkmark" size={20} color="#7AC547" />
+                          <Ionicons name="checkmark" size={20} color={GOOD} />
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={() => {
@@ -217,13 +282,13 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
                   </View>
                 ) : (
                   <TouchableOpacity onPress={() => setEditingUsername(true)}>
-                    <Text style={styles.cardValue}>{authUser.username}</Text>
+                    <Text style={styles.profileName}>{authUser.username}</Text>
                   </TouchableOpacity>
                 )}
                 {!!usernameError && <Text style={styles.fieldError}>{usernameError}</Text>}
 
                 {!!authUser.handle && (
-                  <Text style={styles.cardSubtle}>{authUser.handle}</Text>
+                  <Text style={styles.profileSubtle}>{authUser.handle}</Text>
                 )}
               </View>
             </View>
@@ -259,13 +324,13 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
                     maxLength={150}
                   />
                   <View style={styles.bioEditActions}>
-                    <Text style={styles.cardSubtle}>{bioDraft.length}/150</Text>
+                    <Text style={styles.profileSubtle}>{bioDraft.length}/150</Text>
                     {bioSaving ? (
                       <ActivityIndicator color="#fff" size="small" />
                     ) : (
                       <View style={{ flexDirection: "row", gap: 16 }}>
                         <TouchableOpacity onPress={saveBio}>
-                          <Ionicons name="checkmark" size={20} color="#7AC547" />
+                          <Ionicons name="checkmark" size={20} color={GOOD} />
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={() => {
@@ -292,35 +357,45 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
           </View>
         )}
 
+        {/* ---------- App section ---------- */}
+        <SectionTitle>App</SectionTitle>
         <View style={styles.card}>
-          <Text style={styles.cardLabel}>App version</Text>
-          <Text style={styles.cardValue}>{APP_VERSION}</Text>
-          <Text style={styles.cardSubtle}>{Platform.OS === "ios" ? "iOS" : "Android"}</Text>
+          <SettingsRow
+            icon="information-circle-outline"
+            title="App version"
+            subtitle={Platform.OS === "ios" ? "iOS" : "Android"}
+            right={<Text style={styles.rowValue}>{APP_VERSION}</Text>}
+          />
+          <View style={styles.rowDivider} />
+          <SettingsRow
+            icon="cloud-download-outline"
+            title="Update channel"
+            subtitle={
+              !runningInfo.isEmbedded && runningInfo.createdAt
+                ? `Applied ${new Date(runningInfo.createdAt).toISOString().slice(0, 10)}`
+                : undefined
+            }
+            right={
+              <Text style={styles.rowValue}>
+                {runningInfo.isEmbedded ? "Built-in" : "OTA active"}
+              </Text>
+            }
+          />
+          <View style={styles.rowDivider} />
+          <SettingsRow
+            icon="refresh-outline"
+            title="Check for updates"
+            subtitle={status === "checking" ? "Checking..." : "Make sure you're on the latest build"}
+            onPress={status === "checking" || status === "downloading" ? undefined : runCheck}
+            right={
+              status === "checking" ? (
+                <ActivityIndicator color={ACCENT} size="small" />
+              ) : (
+                <Ionicons name="chevron-forward" size={18} color={MUTED} />
+              )
+            }
+          />
         </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Update channel</Text>
-          <Text style={styles.cardValue}>
-            {runningInfo.isEmbedded ? "Built-in (no OTA applied)" : "OTA update active"}
-          </Text>
-          {!runningInfo.isEmbedded && runningInfo.createdAt && (
-            <Text style={styles.cardSubtle}>
-              Applied {new Date(runningInfo.createdAt).toISOString().slice(0, 10)}
-            </Text>
-          )}
-        </View>
-
-        <TouchableOpacity
-          style={[styles.checkButton, status === "checking" && styles.checkButtonDisabled]}
-          onPress={runCheck}
-          disabled={status === "checking" || status === "downloading"}
-        >
-          {status === "checking" ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.checkButtonText}>Check for Updates</Text>
-          )}
-        </TouchableOpacity>
 
         {status === "upToDate" && (
           <View style={styles.statusCard}>
@@ -337,8 +412,8 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
         {status === "available" && (
           <View style={styles.statusCard}>
             <Text style={styles.statusGood}>An update is available.</Text>
-            <TouchableOpacity style={styles.downloadButton} onPress={downloadUpdate}>
-              <Text style={styles.checkButtonText}>Download Update</Text>
+            <TouchableOpacity style={styles.actionButton} onPress={downloadUpdate}>
+              <Text style={styles.actionButtonText}>Download Update</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -346,19 +421,52 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
         {status === "downloading" && (
           <View style={styles.statusCard}>
             <ActivityIndicator color="#fff" />
-            <Text style={[styles.cardSubtle, { marginTop: 8, textAlign: "center" }]}>Downloading...</Text>
+            <Text style={[styles.rowSubtitle, { marginTop: 8, textAlign: "center" }]}>Downloading...</Text>
           </View>
         )}
 
         {status === "ready" && (
           <View style={styles.statusCard}>
             <Text style={styles.statusGood}>Update downloaded.</Text>
-            <Text style={styles.cardSubtle}>Restart the app now to apply it.</Text>
-            <TouchableOpacity style={styles.downloadButton} onPress={applyUpdate}>
-              <Text style={styles.checkButtonText}>Restart & Apply</Text>
+            <Text style={styles.rowSubtitle}>Restart the app now to apply it.</Text>
+            <TouchableOpacity style={styles.actionButton} onPress={applyUpdate}>
+              <Text style={styles.actionButtonText}>Restart & Apply</Text>
             </TouchableOpacity>
           </View>
         )}
+
+        {/* ---------- Preferences section - visible per the mockup, but not
+             wired to anything real yet. Disabled + "Coming soon" instead of
+             a toggle that silently does nothing. No Dark Mode row - this
+             app doesn't have a light theme to switch to. ---------- */}
+        <SectionTitle>Preferences</SectionTitle>
+        <View style={styles.card}>
+          <SettingsRow
+            icon="notifications-outline"
+            title="Notifications"
+            subtitle="Coming soon"
+            disabled
+            right={
+              <Switch value={false} disabled trackColor={{ false: GLASS_BORDER, true: ACCENT }} />
+            }
+          />
+          <View style={styles.rowDivider} />
+          <SettingsRow
+            icon="globe-outline"
+            title="Language"
+            subtitle="Coming soon"
+            disabled
+            right={<Text style={styles.rowValueMuted}>English</Text>}
+          />
+          <View style={styles.rowDivider} />
+          <SettingsRow
+            icon="shield-checkmark-outline"
+            title="Privacy"
+            subtitle="Coming soon"
+            disabled
+            right={<Ionicons name="chevron-forward" size={18} color={MUTED} />}
+          />
+        </View>
 
         {authUser && (
           <TouchableOpacity
@@ -373,62 +481,118 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
             <Text style={styles.signOutButtonText}>Sign Out</Text>
           </TouchableOpacity>
         )}
-      </View>
+
+        <Text style={styles.versionFooter}>Version {APP_VERSION}</Text>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#000" },
+  root: { flex: 1, backgroundColor: "#0B0B0D" },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     paddingTop: 56,
     paddingHorizontal: 20,
     paddingBottom: 12,
   },
+  backButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: GLASS_BG,
+    borderWidth: 1,
+    borderColor: GLASS_BORDER,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   title: { color: "#fff", fontSize: 20, fontWeight: "700" },
 
-  content: { paddingHorizontal: 20, paddingTop: 8 },
+  content: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40 },
 
-  card: {
+  // ---------- Profile card ----------
+  profileCard: {
     backgroundColor: GLASS_BG,
     borderWidth: 1,
     borderColor: GLASS_BORDER,
     borderRadius: 18,
     padding: 18,
-    marginBottom: 16,
+    marginBottom: 24,
   },
-  cardLabel: { color: "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: "600" },
-  cardValue: { color: "#fff", fontSize: 22, fontWeight: "800", marginTop: 4 },
-  cardSubtle: { color: "rgba(255,255,255,0.6)", fontSize: 12, marginTop: 4 },
+  profileLabel: {
+    color: "rgba(232,166,98,0.75)",
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+  },
+  profileName: { color: "#fff", fontSize: 22, fontWeight: "800", marginTop: 4 },
+  profileSubtle: { color: "rgba(255,255,255,0.6)", fontSize: 12, marginTop: 4 },
 
-  checkButton: {
-    backgroundColor: ACCENT,
-    borderRadius: 20,
-    paddingVertical: 14,
+  profileRow: { flexDirection: "row", alignItems: "center", gap: 14, marginTop: 10 },
+  avatar: { width: 64, height: 64, borderRadius: 32 },
+  avatarPlaceholder: {
+    backgroundColor: "rgba(255,255,255,0.12)",
     alignItems: "center",
     justifyContent: "center",
   },
-  checkButtonDisabled: { opacity: 0.7 },
-  checkButtonText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-
-  statusCard: {
-    backgroundColor: GLASS_BG,
-    borderWidth: 1,
-    borderColor: GLASS_BORDER,
-    borderRadius: 18,
-    padding: 18,
-    marginTop: 16,
-  },
-  statusGood: { color: "#7AC547", fontSize: 15, fontWeight: "700" },
-  statusBad: { color: "#FF6B6B", fontSize: 14, fontWeight: "600" },
-
-  downloadButton: {
-    backgroundColor: ACCENT,
-    borderRadius: 20,
-    paddingVertical: 12,
+  avatarPlaceholderText: { color: "#fff", fontSize: 24, fontWeight: "700" },
+  avatarOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 32,
+    backgroundColor: "rgba(0,0,0,0.4)",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 16,
+  },
+  avatarRing: {
+    borderWidth: 2,
+    borderColor: "rgba(232,166,98,0.55)",
+    borderRadius: 36,
+    padding: 3,
+  },
+  avatarBadge: {
+    position: "absolute",
+    bottom: -2,
+    right: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: ACCENT,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#0B0B0D",
+  },
+  profileInfo: { flex: 1 },
+
+  editRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  editInput: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "800",
+    borderBottomWidth: 1,
+    borderBottomColor: ACCENT,
+    paddingVertical: 2,
+    flex: 1,
+  },
+  fieldError: { color: DESTRUCTIVE, fontSize: 12, marginTop: 4 },
+
+  bioBlock: { marginTop: 14 },
+  bioText: { color: "rgba(255,255,255,0.9)", fontSize: 14, lineHeight: 20 },
+  bioPlaceholder: { color: "rgba(255,255,255,0.4)", fontSize: 14, fontStyle: "italic" },
+  bioInput: {
+    fontSize: 14,
+    fontWeight: "400",
+    minHeight: 60,
+    textAlignVertical: "top",
+  },
+  bioEditActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 6,
   },
 
   accountRow: {
@@ -465,62 +629,86 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(79,216,232,0.15)",
   },
 
-  signOutButton: {
-    backgroundColor: "rgba(255,107,107,0.15)",
+  // ---------- Sectioned list (mockup pattern) ----------
+  sectionTitle: {
+    color: "rgba(255,255,255,0.4)",
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 8,
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  card: {
+    backgroundColor: GLASS_BG,
     borderWidth: 1,
-    borderColor: "rgba(255,107,107,0.4)",
+    borderColor: GLASS_BORDER,
+    borderRadius: 18,
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  rowDisabled: { opacity: 0.5 },
+  rowDivider: { height: 1, backgroundColor: GLASS_BORDER, marginLeft: 68 },
+  rowLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
+  rowIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: "rgba(232,166,98,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowText: { flex: 1 },
+  rowTitle: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  rowSubtitle: { color: "rgba(255,255,255,0.5)", fontSize: 12, marginTop: 2 },
+  rowValue: { color: "rgba(255,255,255,0.7)", fontSize: 13, fontWeight: "600" },
+  rowValueMuted: { color: MUTED, fontSize: 13, fontWeight: "600" },
+
+  // ---------- Status cards (OTA flow feedback) ----------
+  statusCard: {
+    backgroundColor: GLASS_BG,
+    borderWidth: 1,
+    borderColor: GLASS_BORDER,
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 16,
+  },
+  statusGood: { color: GOOD, fontSize: 15, fontWeight: "700" },
+  statusBad: { color: "#FF6B6B", fontSize: 14, fontWeight: "600" },
+  actionButton: {
+    backgroundColor: ACCENT,
+    borderRadius: 20,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+  },
+  actionButtonText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+
+  signOutButton: {
+    backgroundColor: "rgba(232,101,79,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(232,101,79,0.4)",
     borderRadius: 20,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 24,
+    marginTop: 8,
   },
-  signOutButtonText: { color: "#FF6B6B", fontWeight: "700", fontSize: 15 },
+  signOutButtonText: { color: DESTRUCTIVE, fontWeight: "700", fontSize: 15 },
 
-  profileRow: { flexDirection: "row", alignItems: "center", gap: 14 },
-  avatar: { width: 64, height: 64, borderRadius: 32 },
-  avatarPlaceholder: {
-    backgroundColor: "rgba(255,255,255,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarPlaceholderText: { color: "#fff", fontSize: 24, fontWeight: "700" },
-  avatarOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 32,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  profileInfo: { flex: 1 },
-
-  editRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  editInput: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "800",
-    borderBottomWidth: 1,
-    borderBottomColor: ACCENT,
-    paddingVertical: 2,
-    flex: 1,
-  },
-  editConfirm: { color: "#7AC547", fontSize: 20, fontWeight: "800" },
-  editCancel: { color: "#FF6B6B", fontSize: 20, fontWeight: "800" },
-  fieldError: { color: "#FF6B6B", fontSize: 12, marginTop: 4 },
-
-  bioBlock: { marginTop: 14 },
-  bioText: { color: "rgba(255,255,255,0.9)", fontSize: 14, lineHeight: 20 },
-  bioPlaceholder: { color: "rgba(255,255,255,0.4)", fontSize: 14, fontStyle: "italic" },
-  bioInput: {
-    fontSize: 14,
-    fontWeight: "400",
-    minHeight: 60,
-    textAlignVertical: "top",
-  },
-  bioEditActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 6,
+  versionFooter: {
+    textAlign: "center",
+    color: "rgba(255,255,255,0.3)",
+    fontSize: 11,
+    marginTop: 18,
   },
 });

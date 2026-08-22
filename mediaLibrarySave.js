@@ -1,5 +1,5 @@
 import * as MediaLibrary from "expo-media-library";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy"; /* filesystem_legacy_patch */
 import { B24_ALBUM_NAME } from "./libraryFileNaming";
 
 // Moves a downloaded file into public/shared storage under the "B24 Music"

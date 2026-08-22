@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Animated, PanResponder, Dimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { VideoView } from "expo-video";
+import * as ScreenOrientation from "expo-screen-orientation";
 
 const ACCENT = "#FF6B6B";
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -19,8 +20,16 @@ export default function FullscreenVideoPlayer({ track, engine, onClose, onNext, 
   const [chromeVisible, setChromeVisible] = useState(true);
   const playScale = useRef(new Animated.Value(1)).current;
 
-  const [rotated, setRotated] = useState(false);
-  const toggleRotate = () => setRotated((r) => !r);
+  // App.json locks the whole app to portrait. expo-screen-orientation can
+  // override that per-screen: unlock on mount so a physical rotation
+  // triggers a real native landscape layout, re-lock to portrait on
+  // unmount so the rest of the app stays portrait-only.
+  useEffect(() => {
+    ScreenOrientation.unlockAsync();
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
 
   // ---- Draggable seek bar ----
   // Uses the track's measured absolute screen position + the touch's
@@ -139,16 +148,7 @@ export default function FullscreenVideoPlayer({ track, engine, onClose, onNext, 
     : 0;
   const displayedPosition = scrubbing ? scrubPct * (engine?.duration || 0) : engine?.position;
 
-  const videoStyle = rotated
-    ? {
-        position: "absolute",
-        top: (SCREEN_HEIGHT - SCREEN_WIDTH) / 2,
-        left: (SCREEN_WIDTH - SCREEN_HEIGHT) / 2,
-        width: SCREEN_HEIGHT,
-        height: SCREEN_WIDTH,
-        transform: [{ rotate: "90deg" }],
-      }
-    : StyleSheet.absoluteFill;
+  const videoStyle = StyleSheet.absoluteFill;
 
   return (
     <View style={styles.root}>
@@ -177,9 +177,6 @@ export default function FullscreenVideoPlayer({ track, engine, onClose, onNext, 
               <Text style={styles.topBarTitle} numberOfLines={1}>{track?.title}</Text>
               <Text style={styles.topBarArtist} numberOfLines={1}>{track?.artist}</Text>
             </View>
-            <TouchableOpacity onPress={toggleRotate} style={styles.iconButton}>
-              <Text style={styles.iconText}>{rotated ? "Portrait" : "Rotate"}</Text>
-            </TouchableOpacity>
           </View>
 
           <View style={styles.bottomBar} pointerEvents="box-none">

@@ -20,6 +20,8 @@ import JokesScreen from "./JokesScreen";
 import FoodScreen from "./FoodScreen";
 import RecentScreen from "./RecentScreen";
 import AIChatScreen from "./AIChatScreen";
+import InboxScreen from "./InboxScreen"; /* app_inbox_wiring_patch */
+import ShareThreadScreen from "./ShareThreadScreen";
 import FullscreenVideoPlayer from "./FullscreenVideoPlayer";
 import SettingsScreen from "./SettingsScreen";
 import UpdatePrompt from "./UpdatePrompt";
@@ -92,6 +94,7 @@ export default function App() {
 
   const [activeNav, setActiveNav] = useState("home");
   const [activeDrawerScreen, setActiveDrawerScreen] = useState(null); // e.g. "news"
+  const [selectedShareFriend, setSelectedShareFriend] = useState(null); // friend for ShareThreadScreen
   const [nowPlaying, setNowPlaying] = useState(null); // track object
 
   // Push the current track to the home screen widget whenever it changes -
@@ -194,7 +197,10 @@ export default function App() {
   }, [engine.didJustFinish, queueIndex]);
 
   const goToDrawerScreen = (key) => setActiveDrawerScreen(key);
-  const backFromDrawerScreen = () => setActiveDrawerScreen(null);
+  const backFromDrawerScreen = () => {
+    setActiveDrawerScreen(null);
+    setSelectedShareFriend(null);
+  };
 
   // sourceQueue is optional - pass the list a track was tapped from (e.g.
   // Home's displayedTracks) so prev/next can walk it. Omit it (e.g. a
@@ -290,6 +296,29 @@ export default function App() {
     content = <RecentScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "aiChat") {
     content = <AIChatScreen onClose={backFromDrawerScreen} />;
+  } else if (activeDrawerScreen === "inbox") {
+    content = selectedShareFriend ? (
+      <ShareThreadScreen
+        friend={selectedShareFriend}
+        onBack={() => setSelectedShareFriend(null)}
+        onTrackPress={(item) =>
+          /* app_track_mapping_fix */
+          playTrack({
+            id: item.item_id,
+            provider: item.item_meta?.provider,
+            title: item.item_meta?.title,
+            artist: item.item_meta?.artist,
+            artwork: item.item_meta?.artwork_url,
+            duration: item.item_meta?.duration || 0,
+          })
+        }
+      />
+    ) : (
+      <InboxScreen
+        onFriendPress={(friend) => setSelectedShareFriend(friend)}
+        onBack={backFromDrawerScreen}
+      />
+    );
   } else if (activeNav === "home") {
     content = (
       <HomeScreen
@@ -299,6 +328,7 @@ export default function App() {
         onPasteLinkPress={() => goToDrawerScreen("pasteUrl")}
         onRecentPress={() => goToDrawerScreen("recent")}
         onAIChatPress={() => goToDrawerScreen("aiChat")}
+        onInboxPress={() => goToDrawerScreen("inbox")}
         onSettingsPress={() => setActiveNav("settings")}
         nowPlaying={nowPlaying}
         engine={engine}

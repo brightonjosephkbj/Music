@@ -15,7 +15,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import ContextMenuCard from "./ContextMenuCard";
+import ContextMenuCard from "./ContextMenuCard"; /* player_share_patch */
+import { getCurrentUser, listFriends, sendShare } from "./shareClient";
+import { Modal, FlatList } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library/legacy";
 import { addDownload, isDownloaded } from "./libraryStorage";
@@ -402,7 +404,56 @@ export default function PlayerCard({ track, engine, onCollapse, onNext, onPrev, 
     }
   };
 
+  const [shareSheetVisible, setShareSheetVisible] = useState(false);
+  const [shareFriends, setShareFriends] = useState([]);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [sharingToId, setSharingToId] = useState(null);
+
+  const openShareSheet = async () => {
+    setShareSheetVisible(true);
+    setShareLoading(true);
+    try {
+      const u = await getCurrentUser();
+      if (!u?.id) return;
+      const list = await listFriends(u.id);
+      setShareFriends(list);
+    } catch (e) {
+      Alert.alert("Couldn't load friends", e.message || "Try again.");
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const shareToFriend = async (friend) => {
+    if (!track) return;
+    setSharingToId(friend.id);
+    try {
+      const u = await getCurrentUser();
+      if (!u?.id) return;
+      await sendShare(u.id, friend.id, {
+        item_type: "track",
+        item_id: track.id,
+        item_meta: {
+          title: track.title,
+          artist: track.artist,
+          artwork_url: track.artwork,
+          provider: track.provider,
+          duration: track.duration || 0,
+        },
+      });
+      setShareSheetVisible(false);
+    } catch (e) {
+      const msg = e.code === "not_friends"
+        ? "You need to be friends to share."
+        : (e.message || "Failed to share.");
+      Alert.alert("Share failed", msg);
+    } finally {
+      setSharingToId(null);
+    }
+  };
+
   const moreActions = [
+    { key: "share", label: "Share Track", onPress: openShareSheet },
     { key: "eq", label: "Equalizer (coming soon)", onPress: () => Alert.alert("Equalizer", "Coming soon.") },
     { key: "themes", label: "Player Themes (coming soon)", onPress: () => Alert.alert("Player Themes", "Coming soon.") },
     {
@@ -595,6 +646,57 @@ export default function PlayerCard({ track, engine, onCollapse, onNext, onPrev, 
         actions={moreActions}
         onClose={() => setMoreVisible(false)}
       />
+
+      <Modal
+        visible={shareSheetVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShareSheetVisible(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}
+          activeOpacity={1}
+          onPress={() => setShareSheetVisible(false)}
+        >
+          <View
+            style={{
+              backgroundColor: "#1E1E22",
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              padding: 20,
+              maxHeight: "60%",
+            }}
+          >
+            <Text style={{ color: "#fff", fontSize: 17, fontWeight: "700", marginBottom: 14 }}>
+              Share with a friend
+            </Text>
+            {shareLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : shareFriends.length === 0 ? (
+              <Text style={{ color: "#8A8A8E" }}>You don't have friends yet.</Text>
+            ) : (
+              <FlatList
+                data={shareFriends}
+                keyExtractor={(item) => String(item.id)}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      paddingVertical: 12,
+                    }}
+                    disabled={sharingToId === item.id}
+                    onPress={() => shareToFriend(item)}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 15, flex: 1 }}>{item.username}</Text>
+                    {sharingToId === item.id && <ActivityIndicator color="#fff" size="small" />}
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </Animated.View>
   );
 }

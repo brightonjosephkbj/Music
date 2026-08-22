@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy"; /* filesystem_legacy_patch */
 
 export const API_BASE = "https://gateway-cah4.onrender.com";
 const GATEWAY_KEY = "Joy_brightonjosephkbj_Joan";
