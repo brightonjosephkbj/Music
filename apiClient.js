@@ -9,7 +9,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy"; /* filesystem_legacy_patch */
 
-export const API_BASE = "https://gateway-cah4.onrender.com";
+export const API_BASE = "https://gateway-b0tx.onrender.com";
 const GATEWAY_KEY = "Joy_brightonjosephkbj_Joan";
 const AUTH_STORAGE_KEY = "b24_auth";
 
@@ -141,3 +141,18 @@ export async function updateBio(userId, bio) {
   return bio;
 }
 
+
+// Registers this device's Expo push token against the signed-in user, so
+// the backend has somewhere to send "friend sent you a song" pushes.
+export async function registerPushToken(userId, token) {
+  const res = await fetch(`${API_BASE}/api/db/users/${userId}/push-token`, {
+    method: "POST",
+    headers: await authedHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ push_token: token }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "Failed to register push token");
+  }
+  return true;
+}

@@ -23,7 +23,9 @@ import {
   RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { getCurrentUser, getShareThread, markSharesSeen } from "./shareClient";
+import { getCurrentUser, getShareThread, markSharesSeen, sendShare } from "./shareClient";
+import { getDownloads } from "./libraryStorage";
+import SelectItemSheet from "./SelectItemSheet";
 
 const AMBER = "#E8A662";
 const BG = "#0B0B0D";
@@ -97,6 +99,11 @@ function ThreadRow({ item, isUnseen, onPress }) {
             {meta.artist}
           </Text>
         )}
+        {!!meta.message && (
+          <Text style={styles.messageText} numberOfLines={2}>
+            {meta.message}
+          </Text>
+        )}
         <Text style={[styles.directionText, sent ? styles.sentText : styles.receivedText]}>
           {sent ? "You sent" : "They sent"} · {timeAgo(item.created_at)}
         </Text>
@@ -108,11 +115,11 @@ function ThreadRow({ item, isUnseen, onPress }) {
 }
 
 export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress }) {
-  /* thread_props_patch */
   const [user, setUser] = useState(null);
   const [thread, setThread] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const unseenIdsRef = useRef(new Set());
 
@@ -161,6 +168,41 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
     onTrackPress?.(item);
   };
 
+  // Pulls the user's own downloaded audio/video for the share picker.
+  // Device-scanned local files aren't included - a friend can't resolve
+  // an item_id that only exists on this phone.
+  const fetchTracks = useCallback(async () => {
+    const downloads = await getDownloads();
+    return downloads
+      .filter((d) => d.type === "audio")
+      .map((d) => ({ id: d.id, title: d.title, artist: d.artist, artwork_url: d.artwork }));
+  }, []);
+
+  const fetchVideos = useCallback(async () => {
+    const downloads = await getDownloads();
+    return downloads
+      .filter((d) => d.type === "video")
+      .map((d) => ({ id: d.id, title: d.title, artist: d.artist, artwork_url: d.artwork }));
+  }, []);
+
+  const handleSendShare = useCallback(
+    async (item, message) => {
+      if (!user?.id || !friend?.id) return;
+      await sendShare(
+        user.id,
+        friend.id,
+        {
+          item_type: item.__kind === "video" ? "video" : "track",
+          item_id: item.id,
+          item_meta: { title: item.title, artist: item.artist, artwork_url: item.artwork_url },
+        },
+        message
+      );
+      await loadThread(user.id, friend.id);
+    },
+    [user?.id, friend?.id, loadThread]
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -174,10 +216,17 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
           </TouchableOpacity>
         )}
         <Avatar letter={friend.avatar_letter} url={friend.avatar_url} />
-        <View style={{ marginLeft: 10 }}>
+        <View style={{ marginLeft: 10, flex: 1 }}>
           <Text style={styles.headerTitle}>{friend.username || "Friend"}</Text>
           <Text style={styles.headerSubtitle}>{friend.handle}</Text>
         </View>
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => setPickerOpen(true)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="add" size={22} color={BG} />
+        </TouchableOpacity>
       </View>
 
       {loading ? (
@@ -209,6 +258,14 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
           )}
         />
       )}
+
+      <SelectItemSheet
+        visible={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        fetchTracks={fetchTracks}
+        fetchVideos={fetchVideos}
+        onSend={handleSendShare}
+      />
     </View>
   );
 }
@@ -224,6 +281,14 @@ const styles = StyleSheet.create({
   },
   headerTitle: { color: "#fff", fontSize: 20, fontWeight: "700" },
   headerSubtitle: { color: "#9A9A9E", fontSize: 13, marginTop: 2 },
+  addButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: AMBER,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   centerFill: { flex: 1, alignItems: "center", justifyContent: "center" },
   emptyText: { color: "#8A8A8E", fontSize: 15 },
 
@@ -246,6 +311,7 @@ const styles = StyleSheet.create({
 
   trackTitle: { color: "#fff", fontSize: 15, fontWeight: "600" },
   trackArtist: { color: "#9A9A9E", fontSize: 13, marginTop: 1 },
+  messageText: { color: "#C9C9CD", fontSize: 12.5, marginTop: 4, fontStyle: "italic" },
   directionText: { fontSize: 11, marginTop: 4, fontWeight: "600" },
   sentText: { color: AMBER },
   receivedText: { color: "#6FB98F" },

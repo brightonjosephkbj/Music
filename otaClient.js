@@ -3,7 +3,7 @@ import Constants from "expo-constants";
 import appJson from "./app.json";
 import { authedHeaders } from "./apiClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 
 // Uses the version actually baked into this build (app.json's "version"
 // at build time), not some hardcoded string - so this stays correct

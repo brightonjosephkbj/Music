@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Share,
   RefreshControl,
   Alert,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Sharing from "expo-sharing";
@@ -34,6 +35,12 @@ import ImageViewer from "./ImageViewer";
 import { scanDeviceMedia } from "./localMediaScanner";
 import { useDownloads } from "./DownloadsContext";
 import { generateAIPlaylist } from "./aiPlaylist";
+import * as ImagePicker from "expo-image-picker";
+import {
+  getCurrentUser, listFriends, createGroupPlaylist, listGroupPlaylists,
+  getGroupPlaylistTracks, addGroupPlaylistTrack, deleteGroupPlaylistTrack,
+  updateGroupPlaylist, uploadPlaylistArt,
+} from "./shareClient";
 
 const GRADIENT_COLORS = ["#121212", "#181818", "#121212"];
 const GLASS_BG = "rgba(255,255,255,0.08)";
@@ -45,7 +52,7 @@ const PL_GLASS_BG = "rgba(255,255,255,0.04)";
 const PL_GLASS_BORDER = "rgba(255,255,255,0.09)";
 const PL_DARK_GRAY = "#2A2A2E";
 
-const TABS = ["Videos", "All Songs", "Folders", "Playlists", "Artists", "Downloads"];
+const TABS = ["Videos", "All Songs", "Search", "Folders", "Playlists", "Artists", "Downloads"];
 const AS_AMBER = "#F5A623";
 const AS_GOLD = "#D4AF37";
 const AS_NEON = "#00FF88";
@@ -80,10 +87,55 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
   // Playlist tab extras
   const [playlistSearch, setPlaylistSearch] = useState("");
+  const [songSearchQuery, setSongSearchQuery] = useState("");
   const [editPlaylistVisible, setEditPlaylistVisible] = useState(false);
   const [editPlaylistTarget, setEditPlaylistTarget] = useState(null);
   const [editPlaylistName, setEditPlaylistName] = useState("");
   const [editPlaylistArt, setEditPlaylistArt] = useState("");
+
+  // Playlist pill bar: Add / Edit / Sort / Find
+  const [findInPlaylistVisible, setFindInPlaylistVisible] = useState(false);
+  const [findInPlaylistQuery, setFindInPlaylistQuery] = useState("");
+  const [playlistSortMode, setPlaylistSortMode] = useState("recent");
+  const [editModeActive, setEditModeActive] = useState(false);
+  const [editSelectedIds, setEditSelectedIds] = useState(new Set());
+  const [addSongsVisible, setAddSongsVisible] = useState(false);
+  const [addSongsSelectedIds, setAddSongsSelectedIds] = useState(new Set());
+
+  // New Playlist: Personal vs Group choice, then group name + friend picker
+  const [createChoiceVisible, setCreateChoiceVisible] = useState(false);
+  const [groupCreateVisible, setGroupCreateVisible] = useState(false);
+  const [groupCreateStep, setGroupCreateStep] = useState("name"); // "name" | "friends"
+  const [groupName, setGroupName] = useState("");
+  const [groupFriends, setGroupFriends] = useState([]);
+  const [groupFriendsLoading, setGroupFriendsLoading] = useState(false);
+  const [groupSelectedFriendIds, setGroupSelectedFriendIds] = useState(new Set());
+  const [groupCreating, setGroupCreating] = useState(false);
+
+  const [groupPlaylists, setGroupPlaylists] = useState([]);
+  const [selectedGroupPlaylist, setSelectedGroupPlaylist] = useState(null);
+  const [groupPlaylistTracks, setGroupPlaylistTracks] = useState([]);
+  // Caches each group playlist's tracks by id so reopening a playlist you've
+  // already loaded doesn't refetch over the network every time - only a
+  // fresh add/delete (via refreshGroupTracks) or a cache-miss triggers a
+  // real fetch.
+  const groupTracksCacheRef = useRef({});
+  const [groupTracksLoading, setGroupTracksLoading] = useState(false);
+
+  // Group playlist detail: add/edit song wiring
+  const [groupCurrentUserId, setGroupCurrentUserId] = useState(null);
+  const [groupEditModeActive, setGroupEditModeActive] = useState(false);
+  const [groupEditSelectedIds, setGroupEditSelectedIds] = useState(new Set());
+  const [groupAddVisible, setGroupAddVisible] = useState(false);
+  const [groupAddSelectedIds, setGroupAddSelectedIds] = useState(new Set());
+  const [groupAddBusy, setGroupAddBusy] = useState(false);
+  const [groupRemoveBusy, setGroupRemoveBusy] = useState(false);
+
+  // Group playlist info edit (name + art via image picker, no more URL field)
+  const [groupInfoVisible, setGroupInfoVisible] = useState(false);
+  const [groupInfoName, setGroupInfoName] = useState("");
+  const [groupInfoArtUri, setGroupInfoArtUri] = useState(null); // local preview uri, may be existing remote url
+  const [groupInfoSaving, setGroupInfoSaving] = useState(false);
 
   const [selectedFolder, setSelectedFolder] = useState(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
@@ -116,11 +168,27 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     setDownloads(d);
     setFolders(f);
     setPlaylists(p);
+    try {
+      const user = await getCurrentUser();
+      if (user?.id) {
+        const groups = await listGroupPlaylists(user.id);
+        setGroupPlaylists(groups);
+      }
+    } catch (e) {
+      console.warn("Failed to load group playlists:", e.message);
+    }
   }, []);
 
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    (async () => {
+      const user = await getCurrentUser();
+      if (user?.id) setGroupCurrentUserId(user.id);
+    })();
+  }, []);
 
   const generateAI = useCallback(async () => {
     if (aiGenerating) return;
@@ -186,6 +254,37 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     setPlaylistMenuTarget(playlist);
     setPlaylistMenuVisible(true);
   }, []);
+
+  // Shared by both delete entry points (long-press menu + header ⋮ menu) so
+  // the choice between "keep songs" and "remove songs too" is consistent
+  // everywhere a playlist can be deleted from.
+  const confirmDeletePlaylist = useCallback((playlist) => {
+    if (!playlist) return;
+    Alert.alert(
+      "Delete Playlist",
+      `Delete "${playlist.name}"? You can keep the songs in your library, or remove them too if they aren't in any other playlist.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete Playlist Only",
+          onPress: async () => {
+            await deletePlaylist(playlist.id);
+            if (selectedPlaylist && selectedPlaylist.id === playlist.id) closeDetail();
+            loadAll();
+          },
+        },
+        {
+          text: "Delete Playlist & Songs",
+          style: "destructive",
+          onPress: async () => {
+            await deletePlaylist(playlist.id, { alsoDeleteSongs: true });
+            if (selectedPlaylist && selectedPlaylist.id === playlist.id) closeDetail();
+            loadAll();
+          },
+        },
+      ]
+    );
+  }, [selectedPlaylist, loadAll]);
 
   const menuActions = useMemo(() => {
     if (!menuItem) return [];
@@ -276,16 +375,10 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         key: "delete",
         label: "Delete",
         destructive: true,
-        onPress: async () => {
-          await deletePlaylist(playlistMenuTarget.id);
-          if (selectedPlaylist && selectedPlaylist.id === playlistMenuTarget.id) {
-            closeDetail();
-          }
-          loadAll();
-        },
+        onPress: () => confirmDeletePlaylist(playlistMenuTarget),
       },
     ];
-  }, [playlistMenuTarget, selectedPlaylist, loadAll]);
+  }, [playlistMenuTarget, confirmDeletePlaylist]);
 
   const submitPrompt = async () => {
     const value = promptValue.trim();
@@ -321,6 +414,14 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   const appAudio = useMemo(() => downloads.filter((d) => d.type === "audio"), [downloads]);
   const videos = useMemo(() => [...appVideos, ...deviceVideo], [appVideos, deviceVideo]);
   const allSongs = useMemo(() => [...appAudio, ...deviceAudio], [appAudio, deviceAudio]);
+  const searchSongs = useMemo(() => downloads.filter((d) => d.fromSearch === true), [downloads]);
+  const filteredAllSongs = useMemo(() => {
+    if (!songSearchQuery.trim()) return allSongs;
+    const q = songSearchQuery.toLowerCase();
+    return allSongs.filter(
+      (s) => (s.title || "").toLowerCase().includes(q) || (s.artist || "").toLowerCase().includes(q)
+    );
+  }, [allSongs, songSearchQuery]);
 
   const allMedia = useMemo(() => {
     const map = new Map();
@@ -342,16 +443,23 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
   const getPlaylistArt = useCallback((playlist) => {
     if (playlist.art) return { uri: playlist.art };
+    if (playlist.is_group) return null;
     const idSet = new Set(playlist.trackIds || []);
     const firstTrack = allMedia.find((d) => idSet.has(d.id) && d.artwork);
     return firstTrack ? { uri: firstTrack.artwork } : null;
   }, [allMedia]);
 
+  const combinedPlaylists = useMemo(() => {
+    const taggedPersonal = playlists.map((p) => ({ ...p, is_group: false }));
+    const taggedGroup = groupPlaylists.map((p) => ({ ...p, is_group: true }));
+    return [...taggedGroup, ...taggedPersonal];
+  }, [playlists, groupPlaylists]);
+
   const filteredPlaylists = useMemo(() => {
-    if (!playlistSearch.trim()) return playlists;
+    if (!playlistSearch.trim()) return combinedPlaylists;
     const q = playlistSearch.toLowerCase();
-    return playlists.filter((p) => p.name.toLowerCase().includes(q));
-  }, [playlists, playlistSearch]);
+    return combinedPlaylists.filter((p) => p.name.toLowerCase().includes(q));
+  }, [combinedPlaylists, playlistSearch]);
 
   const playAllPlaylist = useCallback((playlist) => {
     const idSet = new Set(playlist.trackIds || []);
@@ -368,6 +476,202 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     }
   }, [allMedia, onTrackPress]);
 
+  const openCreatePlaylistChoice = useCallback(() => {
+    setCreateChoiceVisible(true);
+  }, []);
+
+  const choosePersonalPlaylist = useCallback(() => {
+    setCreateChoiceVisible(false);
+    setPromptMode("playlist");
+    setPromptValue("");
+    setPromptVisible(true);
+  }, []);
+
+  const chooseGroupPlaylist = useCallback(async () => {
+    setCreateChoiceVisible(false);
+    setGroupName("");
+    setGroupSelectedFriendIds(new Set());
+    setGroupCreateStep("name");
+    setGroupCreateVisible(true);
+    setGroupFriendsLoading(true);
+    try {
+      const user = await getCurrentUser();
+      if (user?.id) {
+        const list = await listFriends(user.id);
+        setGroupFriends(list);
+      }
+    } catch (e) {
+      console.warn("Failed to load friends for group playlist:", e.message);
+    } finally {
+      setGroupFriendsLoading(false);
+    }
+  }, []);
+
+  const submitGroupPlaylist = useCallback(async () => {
+    const name = groupName.trim();
+    if (!name || groupCreating) return;
+    setGroupCreating(true);
+    try {
+      const user = await getCurrentUser();
+      if (!user?.id) throw new Error("Not signed in");
+      await createGroupPlaylist(user.id, name, Array.from(groupSelectedFriendIds));
+      setGroupCreateVisible(false);
+      loadAll();
+    } catch (e) {
+      Alert.alert("Couldn't create group playlist", e.message || "Something went wrong - try again.");
+    } finally {
+      setGroupCreating(false);
+    }
+  }, [groupName, groupSelectedFriendIds, groupCreating, loadAll]);
+
+  const refreshGroupTracks = useCallback(async (playlistId) => {
+    const tracks = await getGroupPlaylistTracks(playlistId);
+    groupTracksCacheRef.current[playlistId] = tracks;
+    setGroupPlaylistTracks(tracks);
+    return tracks;
+  }, []);
+
+  const groupAddCandidates = useMemo(() => {
+    if (!selectedGroupPlaylist) return [];
+    const existingUrls = new Set(groupPlaylistTracks.map((t) => t.source_url));
+    return allMedia
+      .filter((m) => !!m.source_url)
+      .map((m) => ({ ...m, __alreadyAdded: existingUrls.has(m.source_url) }));
+  }, [selectedGroupPlaylist, groupPlaylistTracks, allMedia]);
+
+  const submitGroupAddSongs = useCallback(async () => {
+    if (!selectedGroupPlaylist || !groupCurrentUserId || groupAddSelectedIds.size === 0) {
+      setGroupAddVisible(false);
+      return;
+    }
+    setGroupAddBusy(true);
+    try {
+      for (const id of groupAddSelectedIds) {
+        const track = allMedia.find((m) => m.id === id);
+        if (!track || !track.source_url) continue;
+        await addGroupPlaylistTrack(selectedGroupPlaylist.id, groupCurrentUserId, {
+          title: track.title,
+          artist: track.artist,
+          duration: track.duration,
+          artwork_url: track.artwork,
+          source_url: track.source_url,
+        });
+      }
+      await refreshGroupTracks(selectedGroupPlaylist.id);
+      setGroupAddVisible(false);
+      setGroupAddSelectedIds(new Set());
+    } catch (e) {
+      Alert.alert("Couldn't add songs", e.message || "Something went wrong - try again.");
+    } finally {
+      setGroupAddBusy(false);
+    }
+  }, [selectedGroupPlaylist, groupCurrentUserId, groupAddSelectedIds, allMedia, refreshGroupTracks]);
+
+  const confirmRemoveGroupSelected = useCallback(() => {
+    if (!selectedGroupPlaylist || groupEditSelectedIds.size === 0) return;
+    if (selectedGroupPlaylist.role !== "owner") {
+      Alert.alert("Can't remove songs", "Only the playlist creator can remove songs.");
+      return;
+    }
+    Alert.alert(
+      "Remove songs",
+      `Remove ${groupEditSelectedIds.size} song${groupEditSelectedIds.size > 1 ? "s" : ""} from "${selectedGroupPlaylist.name}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            setGroupRemoveBusy(true);
+            try {
+              for (const trackId of groupEditSelectedIds) {
+                await deleteGroupPlaylistTrack(selectedGroupPlaylist.id, trackId, groupCurrentUserId);
+              }
+              await refreshGroupTracks(selectedGroupPlaylist.id);
+              setGroupEditModeActive(false);
+              setGroupEditSelectedIds(new Set());
+            } catch (e) {
+              Alert.alert("Couldn't remove songs", e.message || "Something went wrong - try again.");
+            } finally {
+              setGroupRemoveBusy(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [selectedGroupPlaylist, groupEditSelectedIds, groupCurrentUserId, refreshGroupTracks]);
+
+  const pickGroupArtImage = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Permission needed", "Allow photo access to choose a playlist image.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.7,
+      allowsEditing: true,
+      aspect: [1, 1],
+    });
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      setGroupInfoArtUri(result.assets[0].uri);
+    }
+  }, []);
+
+  const submitGroupInfo = useCallback(async () => {
+    if (!selectedGroupPlaylist || !groupCurrentUserId) return;
+    const name = groupInfoName.trim();
+    if (!name) return;
+    setGroupInfoSaving(true);
+    try {
+      let art = selectedGroupPlaylist.art || null;
+      if (groupInfoArtUri && !groupInfoArtUri.startsWith("http")) {
+        art = await uploadPlaylistArt(groupInfoArtUri);
+      } else if (groupInfoArtUri) {
+        art = groupInfoArtUri;
+      }
+      await updateGroupPlaylist(selectedGroupPlaylist.id, groupCurrentUserId, { name, art });
+      setSelectedGroupPlaylist((prev) => (prev ? { ...prev, name, art } : prev));
+      setGroupInfoVisible(false);
+      loadAll();
+    } catch (e) {
+      Alert.alert("Couldn't update playlist", e.message || "Something went wrong - try again.");
+    } finally {
+      setGroupInfoSaving(false);
+    }
+  }, [selectedGroupPlaylist, groupCurrentUserId, groupInfoName, groupInfoArtUri, loadAll]);
+
+  const openSortMenu = useCallback(() => {
+    Alert.alert("Sort by", "", [
+      { text: "Recently Added", onPress: () => setPlaylistSortMode("recent") },
+      { text: "Album", onPress: () => setPlaylistSortMode("album") },
+      { text: "Artist", onPress: () => setPlaylistSortMode("artist") },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }, []);
+
+  const confirmRemoveSelected = useCallback(() => {
+    if (!selectedPlaylist || editSelectedIds.size === 0) return;
+    Alert.alert(
+      "Remove songs",
+      `Remove ${editSelectedIds.size} song${editSelectedIds.size > 1 ? "s" : ""} from "${selectedPlaylist.name}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            const remaining = (selectedPlaylist.trackIds || []).filter((id) => !editSelectedIds.has(id));
+            await updatePlaylist(selectedPlaylist.id, { trackIds: remaining });
+            setEditModeActive(false);
+            setEditSelectedIds(new Set());
+            loadAll();
+          },
+        },
+      ]
+    );
+  }, [selectedPlaylist, editSelectedIds, loadAll]);
+
   const folderItems = useMemo(() => {
     if (!selectedFolder) return [];
     const idSet = new Set(selectedFolder.itemIds || []);
@@ -378,6 +682,34 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     if (!selectedPlaylist) return [];
     const idSet = new Set(selectedPlaylist.trackIds || []);
     return allMedia.filter((d) => idSet.has(d.id));
+  }, [selectedPlaylist, allMedia]);
+
+  const sortedPlaylistItems = useMemo(() => {
+    if (!selectedPlaylist) return [];
+    let items = [...playlistItems];
+    if (playlistSortMode === "recent") {
+      const order = selectedPlaylist.trackIds || [];
+      items.sort((a, b) => order.indexOf(b.id) - order.indexOf(a.id));
+    } else if (playlistSortMode === "artist") {
+      items.sort((a, b) => (a.artist || "").localeCompare(b.artist || ""));
+    } else if (playlistSortMode === "album") {
+      items.sort((a, b) => (a.album || "").localeCompare(b.album || ""));
+    }
+    return items;
+  }, [selectedPlaylist, playlistItems, playlistSortMode]);
+
+  const filteredPlaylistItems = useMemo(() => {
+    if (!findInPlaylistQuery.trim()) return sortedPlaylistItems;
+    const q = findInPlaylistQuery.toLowerCase();
+    return sortedPlaylistItems.filter(
+      (s) => (s.title || "").toLowerCase().includes(q) || (s.artist || "").toLowerCase().includes(q)
+    );
+  }, [sortedPlaylistItems, findInPlaylistQuery]);
+
+  const addSongsCandidates = useMemo(() => {
+    if (!selectedPlaylist) return [];
+    const idSet = new Set(selectedPlaylist.trackIds || []);
+    return allMedia.map((m) => ({ ...m, __alreadyAdded: idSet.has(m.id) }));
   }, [selectedPlaylist, allMedia]);
 
   const artistTracks = useMemo(() => {
@@ -405,6 +737,14 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     setSelectedFolder(null);
     setSelectedPlaylist(null);
     setSelectedArtist(null);
+    setEditModeActive(false);
+    setEditSelectedIds(new Set());
+    setFindInPlaylistVisible(false);
+    setFindInPlaylistQuery("");
+    setSelectedGroupPlaylist(null);
+    setGroupPlaylistTracks([]);
+    setGroupEditModeActive(false);
+    setGroupEditSelectedIds(new Set());
   };
 
   const openImage = useCallback((item) => {
@@ -429,37 +769,92 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   }, [allMedia]);
 
   const renderTrackRow = useCallback(
-    ({ item }) => (
-      <TouchableOpacity
-        style={styles.row}
-        onPress={() => {
-          if (item.type === "image") return openImage(item);
-          if (!onTrackPress) return;
-          const sourceQueue =
-            selectedFolder ? folderItems :
-            selectedPlaylist ? playlistItems :
-            selectedArtist ? artistTracks :
-            activeTab === "Videos" ? videos :
-            activeTab === "All Songs" ? allSongs :
-            downloads;
-          onTrackPress(item, sourceQueue);
-        }}
-        onLongPress={(evt) => openMenu(evt, item)}
-        delayLongPress={300}
-      >
-        <Image source={item.artwork ? { uri: item.artwork } : undefined} style={styles.rowArt} />
-        <View style={styles.rowTextWrap}>
-          <Text numberOfLines={1} style={styles.rowTitle}>{item.title}</Text>
-          {!!item.artist && <Text numberOfLines={1} style={styles.rowArtist}>{item.artist}</Text>}
-        </View>
-        {item.type === "image" ? (
-          <Text style={styles.rowDuration}>Image</Text>
-        ) : (
+    ({ item }) => {
+      const inPlaylistEditMode = !!selectedPlaylist && editModeActive;
+      const isChecked = editSelectedIds.has(item.id);
+      return (
+        <TouchableOpacity
+          style={styles.row}
+          onPress={() => {
+            if (inPlaylistEditMode) {
+              setEditSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(item.id)) next.delete(item.id);
+                else next.add(item.id);
+                return next;
+              });
+              return;
+            }
+            if (item.type === "image") return openImage(item);
+            if (!onTrackPress) return;
+            const sourceQueue =
+              selectedFolder ? folderItems :
+              selectedPlaylist ? filteredPlaylistItems :
+              selectedArtist ? artistTracks :
+              activeTab === "Videos" ? videos :
+              activeTab === "All Songs" ? allSongs :
+              downloads;
+            onTrackPress(item, sourceQueue);
+          }}
+          onLongPress={(evt) => !inPlaylistEditMode && openMenu(evt, item)}
+          delayLongPress={300}
+        >
+          {inPlaylistEditMode && (
+            <View style={[styles.editCheckbox, isChecked && styles.editCheckboxChecked]}>
+              {isChecked && <Ionicons name="checkmark" size={14} color="#000" />}
+            </View>
+          )}
+          <Image source={item.artwork ? { uri: item.artwork } : undefined} style={styles.rowArt} />
+          <View style={styles.rowTextWrap}>
+            <Text numberOfLines={1} style={styles.rowTitle}>{item.title}</Text>
+            {!!item.artist && <Text numberOfLines={1} style={styles.rowArtist}>{item.artist}</Text>}
+          </View>
+          {item.type === "image" ? (
+            <Text style={styles.rowDuration}>Image</Text>
+          ) : (
+            <Text style={styles.rowDuration}>{formatDuration(item.duration)}</Text>
+          )}
+        </TouchableOpacity>
+      );
+    },
+    [downloads, onTrackPress, activeTab, videos, allSongs, selectedFolder, selectedPlaylist, selectedArtist, folderItems, filteredPlaylistItems, artistTracks, openImage, openMenu, editModeActive, editSelectedIds]
+  );
+
+  const renderGroupTrackRow = useCallback(
+    ({ item }) => {
+      const isChecked = groupEditSelectedIds.has(item.id);
+      return (
+        <TouchableOpacity
+          style={styles.row}
+          onPress={() => {
+            if (groupEditModeActive) {
+              setGroupEditSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(item.id)) next.delete(item.id);
+                else next.add(item.id);
+                return next;
+              });
+              return;
+            }
+            if (onTrackPress) onTrackPress(item, groupPlaylistTracks);
+          }}
+          delayLongPress={300}
+        >
+          {groupEditModeActive && (
+            <View style={[styles.editCheckbox, isChecked && styles.editCheckboxChecked]}>
+              {isChecked && <Ionicons name="checkmark" size={14} color="#000" />}
+            </View>
+          )}
+          <Image source={item.artwork_url ? { uri: item.artwork_url } : undefined} style={styles.rowArt} />
+          <View style={styles.rowTextWrap}>
+            <Text numberOfLines={1} style={styles.rowTitle}>{item.title}</Text>
+            {!!item.artist && <Text numberOfLines={1} style={styles.rowArtist}>{item.artist}</Text>}
+          </View>
           <Text style={styles.rowDuration}>{formatDuration(item.duration)}</Text>
-        )}
-      </TouchableOpacity>
-    ),
-    [downloads, onTrackPress, activeTab, videos, allSongs, selectedFolder, selectedPlaylist, selectedArtist, folderItems, playlistItems, artistTracks, openImage, openMenu]
+        </TouchableOpacity>
+      );
+    },
+    [groupEditModeActive, groupEditSelectedIds, groupPlaylistTracks, onTrackPress]
   );
 
   const keyExtractor = useCallback((item) => item.id, []);
@@ -548,11 +943,10 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
           <View style={styles.spotifyDot} />
           <Text style={styles.spotifySourceText}>Made for you</Text>
         </View>
-        <Text style={styles.spotifyMeta}>{playlistItems.length} tracks</Text>
 
         {/* Actions Row */}
         <View style={styles.spotifyActionBar}>
-          {/* Left Controls: Edit, Share, Options */}
+          {/* Left: Edit pencil + track count */}
           <View style={styles.spotifyLeftActions}>
             <TouchableOpacity
               style={styles.spotifyIconBtn}
@@ -565,46 +959,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
             >
               <Ionicons name="pencil" size={20} color="#FFFFFF" />
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.spotifyIconBtn}
-              onPress={() => {
-                Share.share({
-                  message: `Check out my playlist: ${selectedPlaylist.name}`,
-                });
-              }}
-            >
-              <Ionicons name="share-outline" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.spotifyIconBtn}
-              onPress={() => {
-                Alert.alert(selectedPlaylist.name, "Choose an option", [
-                  {
-                    text: "Edit Playlist",
-                    onPress: () => {
-                      setEditPlaylistTarget(selectedPlaylist);
-                      setEditPlaylistName(selectedPlaylist.name);
-                      setEditPlaylistArt(selectedPlaylist.art || "");
-                      setEditPlaylistVisible(true);
-                    },
-                  },
-                  {
-                    text: "Delete Playlist",
-                    style: "destructive",
-                    onPress: async () => {
-                      await deletePlaylist(selectedPlaylist.id);
-                      closeDetail();
-                      loadAll();
-                    },
-                  },
-                  { text: "Cancel", style: "cancel" },
-                ]);
-              }}
-            >
-              <Text style={styles.spotifyIconTxt}>⋮</Text>
-            </TouchableOpacity>
+            <Text style={styles.spotifyMetaInline}>{playlistItems.length} tracks</Text>
           </View>
 
           {/* Right Controls: Shuffle & Primary Play CTA */}
@@ -626,6 +981,174 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
             </TouchableOpacity>
           </View>
         </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.pillBarScroll}
+          contentContainerStyle={styles.pillBarRow}
+        >
+          <TouchableOpacity
+            style={styles.pillChip}
+            onPress={() => {
+              setAddSongsSelectedIds(new Set());
+              setAddSongsVisible(true);
+            }}
+          >
+            <Ionicons name="add" size={14} color="#fff" />
+            <Text style={styles.pillChipText}>Add</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.pillChip, editModeActive && styles.pillChipActive]}
+            onPress={() => {
+              setEditModeActive((prev) => !prev);
+              setEditSelectedIds(new Set());
+            }}
+          >
+            <Ionicons name="create-outline" size={14} color={editModeActive ? "#000" : "#fff"} />
+            <Text style={[styles.pillChipText, editModeActive && styles.pillChipTextActive]}>Edit</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.pillChip} onPress={openSortMenu}>
+            <Ionicons name="swap-vertical" size={14} color="#fff" />
+            <Text style={styles.pillChipText}>Sort</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.pillChip, findInPlaylistVisible && styles.pillChipActive]}
+            onPress={() => {
+              setFindInPlaylistVisible((prev) => !prev);
+              setFindInPlaylistQuery("");
+            }}
+          >
+            <Ionicons name="search" size={14} color={findInPlaylistVisible ? "#000" : "#fff"} />
+            <Text style={[styles.pillChipText, findInPlaylistVisible && styles.pillChipTextActive]}>Find in playlist</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {findInPlaylistVisible && (
+          <TextInput
+            value={findInPlaylistQuery}
+            onChangeText={setFindInPlaylistQuery}
+            placeholder="Find in playlist..."
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            style={styles.findInPlaylistInput}
+            autoFocus
+          />
+        )}
+
+        {editModeActive && editSelectedIds.size > 0 && (
+          <View style={styles.selectionBar}>
+            <Text style={styles.selectionBarText}>{editSelectedIds.size} selected</Text>
+            <TouchableOpacity style={styles.selectionTrashBtn} onPress={confirmRemoveSelected}>
+              <Ionicons name="trash" size={16} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderGroupPlaylistDetailHeader = () => {
+    if (!selectedGroupPlaylist) return null;
+    const art = selectedGroupPlaylist.art ? { uri: selectedGroupPlaylist.art } : null;
+    const isOwner = selectedGroupPlaylist.role === "owner";
+
+    return (
+      <View style={styles.spotifyHeaderContainer}>
+        <View style={styles.spotifyCoverArtWrap}>
+          {art ? (
+            <Image source={art} style={styles.spotifyCoverArt} />
+          ) : (
+            <View style={[styles.spotifyCoverArt, styles.spotifyArtPlaceholder]}>
+              <Ionicons name="people" size={60} color="rgba(255,255,255,0.4)" />
+            </View>
+          )}
+        </View>
+
+        <Text style={styles.spotifyTitle}>{selectedGroupPlaylist.name}</Text>
+        <View style={styles.spotifySourceRow}>
+          <View style={styles.spotifyDot} />
+          <Text style={styles.spotifySourceText}>
+            Group playlist{isOwner ? " - you're the owner" : ""}
+          </Text>
+        </View>
+
+        <View style={styles.spotifyActionBar}>
+          <View style={styles.spotifyLeftActions}>
+            <TouchableOpacity
+              style={styles.spotifyIconBtn}
+              onPress={() => {
+                setGroupInfoName(selectedGroupPlaylist.name);
+                setGroupInfoArtUri(selectedGroupPlaylist.art || null);
+                setGroupInfoVisible(true);
+              }}
+            >
+              <Ionicons name="pencil" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.spotifyMetaInline}>{groupPlaylistTracks.length} tracks</Text>
+          </View>
+
+          <View style={styles.spotifyRightActions}>
+            <TouchableOpacity
+              style={styles.spotifyIconBtn}
+              onPress={() => {
+                if (groupPlaylistTracks.length > 0 && onTrackPress) {
+                  const shuffled = [...groupPlaylistTracks].sort(() => Math.random() - 0.5);
+                  onTrackPress(shuffled[0], shuffled);
+                }
+              }}
+            >
+              <Ionicons name="shuffle" size={20} color="#1ED760" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.spotifyPlayBtn}
+              onPress={() => {
+                if (groupPlaylistTracks.length > 0 && onTrackPress) {
+                  onTrackPress(groupPlaylistTracks[0], groupPlaylistTracks);
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.spotifyPlayIcon}>▶</Text>
+              <Text style={styles.spotifyPlayText}>PLAY</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.pillBarScroll}
+          contentContainerStyle={styles.pillBarRow}
+        >
+          <TouchableOpacity
+            style={styles.pillChip}
+            onPress={() => { setGroupAddSelectedIds(new Set()); setGroupAddVisible(true); }}
+          >
+            <Ionicons name="add" size={14} color="#fff" />
+            <Text style={styles.pillChipText}>Add</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.pillChip, groupEditModeActive && styles.pillChipActive]}
+            onPress={() => { setGroupEditModeActive((p) => !p); setGroupEditSelectedIds(new Set()); }}
+          >
+            <Ionicons name="create-outline" size={14} color={groupEditModeActive ? "#000" : "#fff"} />
+            <Text style={[styles.pillChipText, groupEditModeActive && styles.pillChipTextActive]}>Edit</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {groupEditModeActive && groupEditSelectedIds.size > 0 && (
+          <View style={styles.selectionBar}>
+            <Text style={styles.selectionBarText}>{groupEditSelectedIds.size} selected</Text>
+            <TouchableOpacity style={styles.selectionTrashBtn} onPress={confirmRemoveGroupSelected} disabled={groupRemoveBusy}>
+              <Ionicons name="trash" size={16} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   };
@@ -647,7 +1170,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     </>
   );
 
-  const detailMode = !!(selectedFolder || selectedPlaylist || selectedArtist);
+  const detailMode = !!(selectedFolder || selectedPlaylist || selectedArtist || selectedGroupPlaylist);
   let detailData = [];
   let detailTitle = "";
   let detailEmptyText = "";
@@ -656,9 +1179,13 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     detailTitle = selectedFolder.name;
     detailEmptyText = "This folder is empty.";
   } else if (selectedPlaylist) {
-    detailData = playlistItems;
+    detailData = filteredPlaylistItems;
     detailTitle = selectedPlaylist.name;
     detailEmptyText = "This playlist is empty.";
+  } else if (selectedGroupPlaylist) {
+    detailData = groupPlaylistTracks;
+    detailTitle = selectedGroupPlaylist.name;
+    detailEmptyText = "No songs added yet.";
   } else if (selectedArtist) {
     detailData = artistTracks;
     detailTitle = selectedArtist;
@@ -677,6 +1204,9 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     listData = allSongs;
     listEmptyText = "No songs yet - download some, or scan your phone storage above.";
     listHeader = scanHeader("Storage permission was denied - enable it in your phone's app settings to see local songs here.");
+  } else if (activeTab === "Search") {
+    listData = searchSongs;
+    listEmptyText = "No songs downloaded from Search yet.";
   } else if (activeTab === "Downloads") {
     listData = downloads;
     listEmptyText = "Nothing downloaded yet.";
@@ -724,16 +1254,78 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         {detailMode ? (
           <TouchableOpacity onPress={closeDetail} style={styles.backButtonRow} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={styles.backGlyph}>‹</Text>
-            <Text style={styles.title} numberOfLines={1}>{detailTitle}</Text>
+            {!selectedPlaylist && !selectedGroupPlaylist && <Text style={styles.title} numberOfLines={1}>{detailTitle}</Text>}
           </TouchableOpacity>
         ) : (
           <Text style={styles.title}>Your library</Text>
         )}
         <View style={styles.headerActions}>
-          {!selectedPlaylist && (
+          {!selectedPlaylist && !selectedGroupPlaylist && (
             <TouchableOpacity style={styles.iconButton} onPress={onSearchPress}>
               <Text style={styles.iconGlyph}>Search</Text>
             </TouchableOpacity>
+          )}
+          {selectedPlaylist && (
+            <>
+              <TouchableOpacity
+                style={styles.iconButtonRound}
+                onPress={() => Share.share({ message: `Check out my playlist: ${selectedPlaylist.name}` })}
+              >
+                <Ionicons name="share-outline" size={16} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.iconButtonRound}
+                onPress={() => {
+                  Alert.alert(selectedPlaylist.name, "Choose an option", [
+                    {
+                      text: "Edit Playlist",
+                      onPress: () => {
+                        setEditPlaylistTarget(selectedPlaylist);
+                        setEditPlaylistName(selectedPlaylist.name);
+                        setEditPlaylistArt(selectedPlaylist.art || "");
+                        setEditPlaylistVisible(true);
+                      },
+                    },
+                    {
+                      text: "Delete Playlist",
+                      style: "destructive",
+                      onPress: () => confirmDeletePlaylist(selectedPlaylist),
+                    },
+                    { text: "Cancel", style: "cancel" },
+                  ]);
+                }}
+              >
+                <Ionicons name="ellipsis-vertical" size={16} color="#fff" />
+              </TouchableOpacity>
+            </>
+          )}
+          {selectedGroupPlaylist && (
+            <>
+              <TouchableOpacity
+                style={styles.iconButtonRound}
+                onPress={() => Share.share({ message: `Check out my group playlist: ${selectedGroupPlaylist.name}` })}
+              >
+                <Ionicons name="share-outline" size={16} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.iconButtonRound}
+                onPress={() => {
+                  Alert.alert(selectedGroupPlaylist.name, "Choose an option", [
+                    {
+                      text: "Edit Info",
+                      onPress: () => {
+                        setGroupInfoName(selectedGroupPlaylist.name);
+                        setGroupInfoArtUri(selectedGroupPlaylist.art || null);
+                        setGroupInfoVisible(true);
+                      },
+                    },
+                    { text: "Cancel", style: "cancel" },
+                  ]);
+                }}
+              >
+                <Ionicons name="ellipsis-vertical" size={16} color="#fff" />
+              </TouchableOpacity>
+            </>
           )}
         </View>
       </View>
@@ -762,9 +1354,12 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
       {detailMode ? (
         <FlatList
           data={detailData}
-          keyExtractor={keyExtractor}
-          renderItem={renderTrackRow}
-          ListHeaderComponent={selectedPlaylist ? renderPlaylistDetailHeader : null}
+          keyExtractor={selectedGroupPlaylist ? (item) => String(item.id) : keyExtractor}
+          renderItem={selectedGroupPlaylist ? renderGroupTrackRow : renderTrackRow}
+          ListHeaderComponent={
+            selectedPlaylist ? renderPlaylistDetailHeader :
+            selectedGroupPlaylist ? renderGroupPlaylistDetailHeader : null
+          }
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={<Text style={styles.emptyText}>{detailEmptyText}</Text>}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
@@ -793,13 +1388,29 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
           {activeTab === "All Songs" && (
             <FlatList
-              data={allSongs}
+              data={filteredAllSongs}
               keyExtractor={keyExtractor}
               renderItem={renderAllSongsRow}
               contentContainerStyle={styles.listContent}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
               ListHeaderComponent={
                 <>
+                  <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+                    <TextInput
+                      value={songSearchQuery}
+                      onChangeText={setSongSearchQuery}
+                      placeholder="Find a song..."
+                      placeholderTextColor="rgba(255,255,255,0.4)"
+                      style={{
+                        backgroundColor: "rgba(255,255,255,0.08)",
+                        borderRadius: 10,
+                        paddingHorizontal: 14,
+                        paddingVertical: 10,
+                        color: "#fff",
+                        fontSize: 15,
+                      }}
+                    />
+                  </View>
                   <View style={styles.asHeroCard}>
                     <View style={styles.asHeroGlow} pointerEvents="none" />
                     <View style={styles.asHeroTopRow}>
@@ -906,11 +1517,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
                 <>
                   <TouchableOpacity
                     style={styles.pl2NewPlaylistCard}
-                    onPress={() => {
-                      setPromptMode("playlist");
-                      setPromptValue("");
-                      setPromptVisible(true);
-                    }}
+                    onPress={openCreatePlaylistChoice}
                     activeOpacity={0.75}
                   >
                     <View style={styles.pl2NewPlaylistIconWrap}>
@@ -966,8 +1573,32 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
                 return (
                   <TouchableOpacity
                     style={styles.pl2Tile}
-                    onPress={() => setSelectedPlaylist(p)}
-                    onLongPress={(evt) => openPlaylistMenu(evt, p)}
+                    onPress={async () => {
+                      if (p.is_group) {
+                        setSelectedGroupPlaylist(p);
+                        const cached = groupTracksCacheRef.current[p.id];
+                        if (cached) {
+                          // Already loaded this playlist before - show it
+                          // instantly, no network round-trip.
+                          setGroupPlaylistTracks(cached);
+                        } else {
+                          setGroupTracksLoading(true);
+                          try {
+                            const tracks = await getGroupPlaylistTracks(p.id);
+                            groupTracksCacheRef.current[p.id] = tracks;
+                            setGroupPlaylistTracks(tracks);
+                          } catch (e) {
+                            Alert.alert("Couldn't load playlist", e.message || "Try again shortly.");
+                            setSelectedGroupPlaylist(null);
+                          } finally {
+                            setGroupTracksLoading(false);
+                          }
+                        }
+                      } else {
+                        setSelectedPlaylist(p);
+                      }
+                    }}
+                    onLongPress={(evt) => !p.is_group && openPlaylistMenu(evt, p)}
                     delayLongPress={300}
                     activeOpacity={0.85}
                   >
@@ -982,10 +1613,16 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
                       <View style={styles.pl2TilePlayFab}>
                         <Ionicons name="play" size={13} color="#0A0A0A" style={{ marginLeft: 1 }} />
                       </View>
+                      {p.is_group && (
+                        <View style={styles.groupBadge}>
+                          <Ionicons name="people" size={10} color="#000" />
+                          <Text style={styles.groupBadgeText}>Group</Text>
+                        </View>
+                      )}
                     </View>
                     <Text numberOfLines={1} style={styles.pl2TileTitle}>{p.name}</Text>
                     <Text numberOfLines={1} style={styles.pl2TileSub}>
-                      {p.trackIds ? p.trackIds.length : 0} tracks
+                      {p.is_group ? "Group playlist" : `${p.trackIds ? p.trackIds.length : 0} tracks`}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -1121,14 +1758,33 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
               placeholderTextColor="rgba(255,255,255,0.4)"
               style={styles.promptInput}
             />
-            <Text style={styles.editPlaylistLabel}>Cover Image URL (Optional)</Text>
-            <TextInput
-              value={editPlaylistArt}
-              onChangeText={setEditPlaylistArt}
-              placeholder="https://..."
-              placeholderTextColor="rgba(255,255,255,0.4)"
-              style={styles.promptInput}
-            />
+            <Text style={styles.editPlaylistLabel}>Cover Image</Text>
+            <TouchableOpacity
+              style={styles.imagePickButton}
+              onPress={async () => {
+                const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                if (!perm.granted) {
+                  Alert.alert("Permission needed", "Allow photo access to choose a playlist image.");
+                  return;
+                }
+                const result = await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                  quality: 0.7,
+                  allowsEditing: true,
+                  aspect: [1, 1],
+                });
+                if (!result.canceled && result.assets?.[0]?.uri) {
+                  setEditPlaylistArt(result.assets[0].uri);
+                }
+              }}
+            >
+              {editPlaylistArt ? (
+                <Image source={{ uri: editPlaylistArt }} style={styles.imagePickPreview} />
+              ) : (
+                <Ionicons name="image-outline" size={22} color="rgba(255,255,255,0.5)" />
+              )}
+              <Text style={styles.imagePickText}>{editPlaylistArt ? "Change Image" : "Choose Image"}</Text>
+            </TouchableOpacity>
             <View style={styles.promptButtons}>
               <TouchableOpacity onPress={() => setEditPlaylistVisible(false)} style={styles.promptButton}>
                 <Text style={styles.promptButtonText}>Cancel</Text>
@@ -1147,6 +1803,269 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
                 style={[styles.promptButton, styles.promptButtonPrimary]}
               >
                 <Text style={styles.promptButtonText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add songs to a Group Playlist - only tracks with a source_url can
+          be shared, since that's what other members' devices re-fetch from */}
+      <Modal visible={groupAddVisible} transparent animationType="fade" onRequestClose={() => setGroupAddVisible(false)}>
+        <View style={styles.promptBackdrop}>
+          <View style={[styles.promptCard, { maxHeight: "70%" }]}>
+            <Text style={styles.promptTitle}>Add Songs</Text>
+            <FlatList
+              data={groupAddCandidates}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => {
+                const checked = groupAddSelectedIds.has(item.id);
+                return (
+                  <TouchableOpacity
+                    style={[styles.addSongRow, item.__alreadyAdded && styles.addSongRowDisabled]}
+                    disabled={item.__alreadyAdded}
+                    onPress={() => {
+                      setGroupAddSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(item.id)) next.delete(item.id);
+                        else next.add(item.id);
+                        return next;
+                      });
+                    }}
+                  >
+                    <View style={[styles.editCheckbox, checked && styles.editCheckboxChecked]}>
+                      {checked && <Ionicons name="checkmark" size={14} color="#000" />}
+                    </View>
+                    <Text numberOfLines={1} style={[styles.addSongTitle, item.__alreadyAdded && styles.addSongTitleDisabled]}>
+                      {item.title}{item.__alreadyAdded ? " (already added)" : ""}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <Text style={styles.emptyText}>
+                  No shareable songs yet - only songs downloaded from Search can be added to group playlists.
+                </Text>
+              }
+            />
+            <View style={styles.promptButtons}>
+              <TouchableOpacity onPress={() => setGroupAddVisible(false)} style={styles.promptButton}>
+                <Text style={styles.promptButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={submitGroupAddSongs}
+                disabled={groupAddBusy}
+                style={[styles.promptButton, styles.promptButtonPrimary, groupAddBusy && { opacity: 0.6 }]}
+              >
+                <Text style={styles.promptButtonText}>{groupAddBusy ? "Adding..." : "Add"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit Group Playlist info - name + image picker (no URL entry) */}
+      <Modal visible={groupInfoVisible} transparent animationType="fade" onRequestClose={() => setGroupInfoVisible(false)}>
+        <View style={styles.promptBackdrop}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>Edit Playlist</Text>
+            <Text style={styles.editPlaylistLabel}>Playlist Name</Text>
+            <TextInput
+              value={groupInfoName}
+              onChangeText={setGroupInfoName}
+              placeholder="Name"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              style={styles.promptInput}
+            />
+            <Text style={styles.editPlaylistLabel}>Cover Image</Text>
+            <TouchableOpacity style={styles.imagePickButton} onPress={pickGroupArtImage}>
+              {groupInfoArtUri ? (
+                <Image source={{ uri: groupInfoArtUri }} style={styles.imagePickPreview} />
+              ) : (
+                <Ionicons name="image-outline" size={22} color="rgba(255,255,255,0.5)" />
+              )}
+              <Text style={styles.imagePickText}>{groupInfoArtUri ? "Change Image" : "Choose Image"}</Text>
+            </TouchableOpacity>
+            <View style={styles.promptButtons}>
+              <TouchableOpacity onPress={() => setGroupInfoVisible(false)} style={styles.promptButton}>
+                <Text style={styles.promptButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={submitGroupInfo}
+                disabled={groupInfoSaving}
+                style={[styles.promptButton, styles.promptButtonPrimary, groupInfoSaving && { opacity: 0.6 }]}
+              >
+                <Text style={styles.promptButtonText}>{groupInfoSaving ? "Saving..." : "Save"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* New Playlist: Personal vs Group choice */}
+      <Modal visible={createChoiceVisible} transparent animationType="fade" onRequestClose={() => setCreateChoiceVisible(false)}>
+        <TouchableOpacity style={styles.promptBackdrop} activeOpacity={1} onPress={() => setCreateChoiceVisible(false)}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>New Playlist</Text>
+            <TouchableOpacity style={styles.choiceRow} onPress={choosePersonalPlaylist}>
+              <View style={styles.choiceIconWrap}>
+                <Ionicons name="person" size={18} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.choiceTitle}>Personal</Text>
+                <Text style={styles.choiceSub}>Just for you, stored on this device</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.choiceRow} onPress={chooseGroupPlaylist}>
+              <View style={[styles.choiceIconWrap, { backgroundColor: "rgba(30,215,96,0.15)" }]}>
+                <Ionicons name="people" size={18} color="#1ED760" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.choiceTitle}>Group</Text>
+                <Text style={styles.choiceSub}>Share with friends - everyone can add songs</Text>
+              </View>
+            </TouchableOpacity>
+            <View style={styles.promptButtons}>
+              <TouchableOpacity onPress={() => setCreateChoiceVisible(false)} style={styles.promptButton}>
+                <Text style={styles.promptButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Group Playlist creation: name, then friend picker */}
+      <Modal visible={groupCreateVisible} transparent animationType="fade" onRequestClose={() => setGroupCreateVisible(false)}>
+        <View style={styles.promptBackdrop}>
+          <View style={[styles.promptCard, { maxHeight: "75%" }]}>
+            {groupCreateStep === "name" ? (
+              <>
+                <Text style={styles.promptTitle}>Name your group playlist</Text>
+                <TextInput
+                  value={groupName}
+                  onChangeText={setGroupName}
+                  placeholder="Playlist name"
+                  placeholderTextColor="rgba(255,255,255,0.4)"
+                  style={styles.promptInput}
+                  autoFocus
+                />
+                <View style={styles.promptButtons}>
+                  <TouchableOpacity onPress={() => setGroupCreateVisible(false)} style={styles.promptButton}>
+                    <Text style={styles.promptButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => groupName.trim() && setGroupCreateStep("friends")}
+                    style={[styles.promptButton, styles.promptButtonPrimary]}
+                  >
+                    <Text style={styles.promptButtonText}>Next</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.promptTitle}>Add friends (optional)</Text>
+                {groupFriendsLoading ? (
+                  <Text style={styles.emptyText}>Loading friends...</Text>
+                ) : (
+                  <FlatList
+                    data={groupFriends}
+                    keyExtractor={(item) => String(item.id)}
+                    renderItem={({ item }) => {
+                      const checked = groupSelectedFriendIds.has(item.id);
+                      return (
+                        <TouchableOpacity
+                          style={styles.addSongRow}
+                          onPress={() => {
+                            setGroupSelectedFriendIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(item.id)) next.delete(item.id);
+                              else next.add(item.id);
+                              return next;
+                            });
+                          }}
+                        >
+                          <View style={[styles.editCheckbox, checked && styles.editCheckboxChecked]}>
+                            {checked && <Ionicons name="checkmark" size={14} color="#000" />}
+                          </View>
+                          <Text style={styles.addSongTitle}>{item.username}</Text>
+                        </TouchableOpacity>
+                      );
+                    }}
+                    ListEmptyComponent={<Text style={styles.emptyText}>No friends yet - you can still create the playlist and add friends later.</Text>}
+                  />
+                )}
+                <View style={styles.promptButtons}>
+                  <TouchableOpacity onPress={() => setGroupCreateStep("name")} style={styles.promptButton}>
+                    <Text style={styles.promptButtonText}>Back</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={submitGroupPlaylist}
+                    disabled={groupCreating}
+                    style={[styles.promptButton, styles.promptButtonPrimary, groupCreating && { opacity: 0.6 }]}
+                  >
+                    <Text style={styles.promptButtonText}>{groupCreating ? "Creating..." : "Create"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Songs to Playlist Picker */}
+      <Modal visible={addSongsVisible} transparent animationType="fade" onRequestClose={() => setAddSongsVisible(false)}>
+        <View style={styles.promptBackdrop}>
+          <View style={[styles.promptCard, { maxHeight: "70%" }]}>
+            <Text style={styles.promptTitle}>Add Songs</Text>
+            <FlatList
+              data={addSongsCandidates}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => {
+                const checked = addSongsSelectedIds.has(item.id);
+                return (
+                  <TouchableOpacity
+                    style={[styles.addSongRow, item.__alreadyAdded && styles.addSongRowDisabled]}
+                    disabled={item.__alreadyAdded}
+                    onPress={() => {
+                      setAddSongsSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(item.id)) next.delete(item.id);
+                        else next.add(item.id);
+                        return next;
+                      });
+                    }}
+                  >
+                    <View style={[styles.editCheckbox, checked && styles.editCheckboxChecked]}>
+                      {checked && <Ionicons name="checkmark" size={14} color="#000" />}
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.addSongTitle, item.__alreadyAdded && styles.addSongTitleDisabled]}
+                    >
+                      {item.title}{item.__alreadyAdded ? " (already added)" : ""}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={<Text style={styles.emptyText}>No songs in your library yet.</Text>}
+            />
+            <View style={styles.promptButtons}>
+              <TouchableOpacity onPress={() => setAddSongsVisible(false)} style={styles.promptButton}>
+                <Text style={styles.promptButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  if (selectedPlaylist) {
+                    for (const id of addSongsSelectedIds) {
+                      await addTrackToPlaylist(selectedPlaylist.id, id);
+                    }
+                  }
+                  setAddSongsVisible(false);
+                  loadAll();
+                }}
+                style={[styles.promptButton, styles.promptButtonPrimary]}
+              >
+                <Text style={styles.promptButtonText}>Add</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1521,4 +2440,68 @@ const styles = StyleSheet.create({
   asRowDuration: { color: "rgba(255,255,255,0.45)", fontSize: 11, fontWeight: "600" },
   asRowDurationActive: { color: AS_AMBER },
   asRowMoreBtn: { padding: 4 },
+
+  /* Playlist detail: pill bar, checkboxes, find/edit UI */
+  pillBarScroll: { width: "100%", marginTop: 18 },
+  pillBarRow: { flexDirection: "row", gap: 8, paddingRight: 16 },
+  iconButtonRound: {
+    width: 34, height: 34, borderRadius: 17, backgroundColor: GLASS_BG,
+    borderWidth: 1, borderColor: GLASS_BORDER, justifyContent: "center", alignItems: "center",
+  },
+  spotifyMetaInline: { color: "#B3B3B3", fontSize: 12, fontWeight: "600" },
+  pillChip: {
+    flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7,
+  },
+  pillChipActive: { backgroundColor: "#1ED760", borderColor: "#1ED760" },
+  pillChipText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  pillChipTextActive: { color: "#000" },
+  findInPlaylistInput: {
+    backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9,
+    color: "#fff", fontSize: 14, marginTop: 12, width: "100%",
+  },
+  selectionBar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    backgroundColor: "rgba(255,107,107,0.12)", borderWidth: 1, borderColor: "rgba(255,107,107,0.3)",
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginTop: 12, width: "100%",
+  },
+  selectionBarText: { color: "#fff", fontWeight: "600", fontSize: 13 },
+  selectionTrashBtn: {
+    backgroundColor: "#FF6B6B", width: 30, height: 30, borderRadius: 15, justifyContent: "center", alignItems: "center",
+  },
+  editCheckbox: {
+    width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: "rgba(255,255,255,0.4)",
+    justifyContent: "center", alignItems: "center", marginRight: 12,
+  },
+  editCheckboxChecked: { backgroundColor: "#1ED760", borderColor: "#1ED760" },
+  addSongRow: {
+    flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.1)",
+  },
+  addSongRowDisabled: { opacity: 0.4 },
+  addSongTitle: { color: "#fff", fontSize: 14, flex: 1 },
+  addSongTitleDisabled: { color: "#B3B3B3" },
+
+  choiceRow: {
+    flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12,
+    borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.1)",
+  },
+  choiceIconWrap: {
+    width: 38, height: 38, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.08)",
+    justifyContent: "center", alignItems: "center",
+  },
+  choiceTitle: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  choiceSub: { color: "#B3B3B3", fontSize: 12, marginTop: 2 },
+  groupBadge: {
+    position: "absolute", left: 8, top: 8, flexDirection: "row", alignItems: "center", gap: 3,
+    backgroundColor: "#1ED760", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 3,
+  },
+  groupBadgeText: { color: "#000", fontSize: 9, fontWeight: "800" },
+  imagePickButton: {
+    flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 10, marginBottom: 14,
+  },
+  imagePickPreview: { width: 40, height: 40, borderRadius: 8 },
+  imagePickText: { color: "#fff", fontSize: 13, fontWeight: "600" },
 });

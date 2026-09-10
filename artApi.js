@@ -1,6 +1,6 @@
 import { authedHeaders } from "./apiClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 
 // Normalizes all three art backends into one shape the grid + ImageViewer
 // both understand: { id, title, artist, date, credit, license, thumbnail,

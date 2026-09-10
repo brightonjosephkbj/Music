@@ -45,7 +45,7 @@ async function setCachedLyrics(artist, title, data) {
   } catch {}
 }
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_HEIGHT = Dimensions.get("window").height * 0.7;
 

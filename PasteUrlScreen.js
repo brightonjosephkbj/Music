@@ -226,6 +226,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
         localUri,
         duration: result.duration || 0,
         source: result.method,
+        source_url: result.sourceUrl || result.downloadUrl || url.trim(),
         addedAt: Date.now(),
       };
 
@@ -333,6 +334,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
           localUri,
           duration: Math.round((track.duration_ms || 0) / 1000),
           source: "spotify",
+          source_url: match.url || null,
           spotifyId: track.spotify_id || null,
           addedAt: Date.now(),
         };
@@ -418,7 +420,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
               </TouchableOpacity>
             )}
           </View>
-          <TouchableOpacity onPress={onFetch} style={styles.fetchButton}>
+          <TouchableOpacity onPress={onFetch} style={styles.fetchButton} disabled={loading}>
             <Text style={styles.fetchButtonText}>Fetch Media</Text>
           </TouchableOpacity>
         </View>

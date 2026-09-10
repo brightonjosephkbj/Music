@@ -8,7 +8,7 @@
 
 import { authedHeaders } from "./apiClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 
 // Plain fetch() has no built-in timeout, and we've already seen (the hung
 // yt-dlp curl test) how badly a stuck request can stall a UI. The scrape
@@ -130,13 +130,24 @@ export async function fetchInfoFromBackend(pageUrl) {
 
 // The one entry point the UI calls: tries the free client-side scrape
 // first, and only touches the backend if that comes back empty or errors.
+function isYoutubeUrl(url) {
+  return /youtube\.com|youtu\.be/i.test(url);
+}
+
 export async function resolveUrl(pageUrl) {
-  try {
-    const direct = await tryClientSideFetch(pageUrl);
-    if (direct) return { ...direct, method: "scrape" };
-  } catch {
-    // Network hiccup, timeout, or a page that blocks non-browser fetches -
-    // fall through to the backend rather than surfacing this as an error.
+  // YouTube pages carry an og:video meta tag that LOOKS like a direct media
+  // URL to our scraper, but it's not actually a playable/downloadable
+  // stream - it just points back at an embed page. Skip the scrape attempt
+  // entirely for YouTube and always go straight to the backend's yt-dlp
+  // endpoint, which resolves a real stream URL.
+  if (!isYoutubeUrl(pageUrl)) {
+    try {
+      const direct = await tryClientSideFetch(pageUrl);
+      if (direct) return { ...direct, method: "scrape" };
+    } catch {
+      // Network hiccup, timeout, or a page that blocks non-browser fetches -
+      // fall through to the backend rather than surfacing this as an error.
+    }
   }
   const viaBackend = await fetchInfoFromBackend(pageUrl);
   return { ...viaBackend, method: "ytdlp" };

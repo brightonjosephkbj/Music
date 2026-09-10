@@ -72,6 +72,22 @@
         {
           "enableBackgroundAudio": true
         }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "NowPlaying",
+              "label": "B24music Now Playing",
+              "minWidth": "250dp",
+              "minHeight": "80dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 1,
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
       ]
     ],
     "runtimeVersion": {

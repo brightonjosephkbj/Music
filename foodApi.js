@@ -1,6 +1,6 @@
 import { authedHeaders } from "./apiClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 
 // Open Food Facts has no "random product" endpoint, so the default grid
 // is built the same way Weather's random cities are: a curated list of

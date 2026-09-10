@@ -18,9 +18,37 @@ function trackKey(t) {
   return `${t.provider}-${t.id}`;
 }
 
+// Junk that shows up in search results but isn't the actual song - beat
+// tapes, karaoke instrumentals, "type beat" uploads, covers. Filtered out
+// of candidate scoring below so they don't win just for matching keywords.
+const JUNK_TITLE_PATTERN = /\b(type beat|instrumental|karaoke|made popular by|cover|no drums|no vocals)\b/i;
+
+// Scores a search result against the artist the backend actually asked
+// for. Exact/partial artist match wins; junk titles are disqualified
+// outright; tracks with real metadata (duration, artwork) are preferred
+// over bare uploads that tend to be low-quality matches.
+function scoreCandidate(track, artistHint) {
+  if (!track?.title) return -1;
+  if (JUNK_TITLE_PATTERN.test(track.title)) return -1;
+
+  let score = 0;
+  if (artistHint && track.artist) {
+    const a = track.artist.toLowerCase().trim();
+    const hint = artistHint.toLowerCase().trim();
+    if (a === hint) score += 3;
+    else if (a.includes(hint) || hint.includes(a)) score += 2;
+  }
+  if (track.duration && track.duration > 60) score += 1;
+  if (track.artwork) score += 1;
+  return score;
+}
+
 // Resolves one AI-suggested search query to the single best real,
-// playable track via the same endpoint SearchScreen.js uses.
-async function resolveQuery(query) {
+// playable track via the same endpoint SearchScreen.js uses. Scores every
+// candidate instead of blindly taking the first result - the search API's
+// top hit is often a "Type Beat" or generic genre upload that happens to
+// match the query keywords, not the actual artist/song asked for.
+async function resolveQuery(query, artistHint) {
   const params = new URLSearchParams({ q: query });
   const res = await fetch(
     `${API_BASE}/api/apicache/api/music/search?${params.toString()}`,
@@ -30,7 +58,20 @@ async function resolveQuery(query) {
   const data = await res.json().catch(() => null);
   const cats = data?.categories || {};
   const all = Object.values(cats).flat();
-  return all[0] || null;
+  if (all.length === 0) return null;
+
+  let best = null;
+  let bestScore = -Infinity;
+  for (const track of all) {
+    const s = scoreCandidate(track, artistHint);
+    if (s > bestScore) {
+      bestScore = s;
+      best = track;
+    }
+  }
+  // Every candidate scored as junk (-1) - fall back to the raw top result
+  // rather than returning nothing. A mediocre match beats no track at all.
+  return bestScore > -1 ? best : all[0];
 }
 
 // Generates a playlist from on-device listening history + Groq, resolves
@@ -47,8 +88,8 @@ export async function resolvePlaylistFromAIData(data) {
 
   const resolved = [];
   const seenKeys = new Set();
-  for (const { query } of queries) {
-    const track = await resolveQuery(query);
+  for (const { query, artist } of queries) {
+    const track = await resolveQuery(query, artist);
     if (!track?.id || !track?.provider) continue;
     const key = trackKey(track);
     if (seenKeys.has(key)) continue;

@@ -35,6 +35,14 @@ async function setJSON(key, value) {
 export const getDownloads = () => getJSON(KEYS.DOWNLOADS, []);
 export const saveDownloads = (list) => setJSON(KEYS.DOWNLOADS, list);
 
+export async function addDownloadEntry(entry) {
+  const list = await getDownloads();
+  const filtered = list.filter((d) => d.id !== entry.id);
+  const next = [...filtered, entry];
+  await saveDownloads(next);
+  return next;
+}
+
 export async function removeDownload(id) {
   const list = await getDownloads();
   return saveDownloads(list.filter((d) => d.id !== id));
@@ -105,9 +113,27 @@ export async function updatePlaylist(id, patch) {
   return savePlaylists(next);
 }
 
-export async function deletePlaylist(id) {
+// Deletes a playlist. When alsoDeleteSongs is true, also removes its
+// tracks from downloads - but only tracks not referenced by any OTHER
+// playlist, so a song shared across playlists survives deleting one of
+// them. Songs are always left alone by default (alsoDeleteSongs: false).
+export async function deletePlaylist(id, { alsoDeleteSongs = false } = {}) {
   const list = await getPlaylists();
-  return savePlaylists(list.filter((p) => p.id !== id));
+  const target = list.find((p) => p.id === id);
+  const remaining = list.filter((p) => p.id !== id);
+  await savePlaylists(remaining);
+
+  if (alsoDeleteSongs && target?.trackIds?.length) {
+    const stillReferenced = new Set();
+    remaining.forEach((p) => (p.trackIds || []).forEach((tid) => stillReferenced.add(tid)));
+    const toRemove = new Set(target.trackIds.filter((tid) => !stillReferenced.has(tid)));
+    if (toRemove.size > 0) {
+      const downloads = await getDownloads();
+      await saveDownloads(downloads.filter((d) => !toRemove.has(d.id)));
+    }
+  }
+
+  return remaining;
 }
 
 export async function addTrackToPlaylist(playlistId, trackId) {

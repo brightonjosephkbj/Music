@@ -10,17 +10,19 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
+  Alert,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import * as FileSystem from "expo-file-system/legacy";
-import { getDownloads, saveDownloads } from "./libraryStorage";
+import { getDownloads, saveDownloads, addDownloadEntry } from "./libraryStorage";
 import { useDownloads } from "./DownloadsContext";
 
 import { authedHeaders } from "./apiClient";
+import { lightningExtract } from "./urlFetchClient";
 import { buildLibraryFilename } from "./libraryFileNaming";
 import { saveDownloadToSharedStorage } from "./mediaLibrarySave";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 const JET_BLACK = "#1D1D1D";
 const ORCHID = "#E5BDDF";
 const GLASS_BG = "rgba(229,189,223,0.06)";
@@ -215,9 +217,12 @@ export default function SearchScreen({ onTrackPress }) {
         localUri,
         duration: track.duration || 0,
         source: track.provider,
+        source_url: track.download_url || null,
+        fromSearch: true,
         addedAt: Date.now(),
       };
       const existing = await getDownloads();
+      console.log("SAVING ENTRY:", JSON.stringify(entry));
       await saveDownloads([...existing, entry]);
       setDownloadedIds((prev) => new Set(prev).add(key));
     } catch (err) {
@@ -237,10 +242,10 @@ export default function SearchScreen({ onTrackPress }) {
     const id = `${ytItem.id}-${option.key}`;
     setResolvingIds((prev) => new Set(prev).add(id));
     try {
-      const params = new URLSearchParams({ url: ytItem.url, mode: option.mode, quality: option.quality });
-      const res = await fetch(`${API_BASE}/api/downloads/remote/stream-info?${params.toString()}`, { headers: await authedHeaders() });
-      if (!res.ok) throw new Error(`Resolve failed (${res.status})`);
-      return await res.json();
+      // Same call PasteUrlScreen uses for its ytdlp path - lightningExtract
+      // already unwraps the backend's { ok, data } envelope correctly,
+      // unlike the raw fetch this used to do here.
+      return await lightningExtract(ytItem.url, option.mode, option.quality);
     } catch (err) {
       setError(err.message || "Could not load that track");
       return null;
@@ -284,6 +289,11 @@ export default function SearchScreen({ onTrackPress }) {
 
     const streamInfo = await resolveAtQuality(ytItem, option);
     if (!streamInfo) return;
+    console.log("STREAM INFO:", JSON.stringify(streamInfo));
+    if (!streamInfo.stream_url) {
+      setError(`No stream URL returned for "${ytItem.title}" (${option.label})`);
+      return;
+    }
 
     setDownloadingKey(key);
     setDownloadProgress(0);
@@ -314,7 +324,7 @@ export default function SearchScreen({ onTrackPress }) {
       await saveDownloadToSharedStorage(localUri);
 
       const entry = {
-        id: key,
+        id: `youtube_${Date.now()}`,
         type: option.mode === "video" ? "video" : "audio",
         title: streamInfo.title || ytItem.title,
         artist: ytItem.uploader,
@@ -322,10 +332,14 @@ export default function SearchScreen({ onTrackPress }) {
         localUri,
         duration: ytItem.duration || 0,
         source: "youtube",
+        fromSearch: true,
         addedAt: Date.now(),
+        // Durable link for re-extraction (e.g. group playlists on other
+        // devices) - NOT streamInfo.stream_url, which is a short-lived
+        // relay link tied to this one /extract job and will die later.
+        source_url: ytItem.url || `https://youtu.be/${ytItem.id}`,
       };
-      const existing = await getDownloads();
-      await saveDownloads([...existing, entry]);
+      await addDownloadEntry(entry);
       setDownloadedIds((prev) => new Set(prev).add(key));
     } catch (err) {
       if (!isCancelled(key)) setError(err.message || "Download failed");
@@ -359,9 +373,23 @@ export default function SearchScreen({ onTrackPress }) {
       const streamInfo = await resolveAtQuality(ytItem, option);
       if (!streamInfo) continue;
 
+      setDownloadingKey(key);
+      setDownloadProgress(0);
+
       try {
         const localUri = FileSystem.documentDirectory + buildLibraryFilename(streamInfo.title || ytItem.title, ytItem.uploader, key, streamInfo.ext || option.ext);
-        const downloadResumable = FileSystem.createDownloadResumable(streamInfo.stream_url, localUri, {});
+        const downloadResumable = FileSystem.createDownloadResumable(
+          streamInfo.stream_url,
+          localUri,
+          {},
+          (progressEvent) => {
+            const pct =
+              progressEvent.totalBytesExpectedToWrite > 0
+                ? progressEvent.totalBytesWritten / progressEvent.totalBytesExpectedToWrite
+                : 0;
+            setDownloadProgress(pct);
+          }
+        );
         await downloadResumable.downloadAsync();
         await saveDownloadToSharedStorage(localUri);
 
@@ -374,6 +402,8 @@ export default function SearchScreen({ onTrackPress }) {
           localUri,
           duration: ytItem.duration || 0,
           source: "youtube",
+          source_url: ytItem.url || `https://youtu.be/${ytItem.id}`,
+          fromSearch: true,
           addedAt: Date.now(),
         };
         const existing = await getDownloads();
@@ -381,6 +411,8 @@ export default function SearchScreen({ onTrackPress }) {
         setDownloadedIds((prev) => new Set(prev).add(key));
       } catch (err) {
         console.warn(`Batch download failed for "${ytItem.title}":`, err);
+      } finally {
+        setDownloadingKey(null);
       }
     }
 
@@ -390,6 +422,13 @@ export default function SearchScreen({ onTrackPress }) {
 
   const renderYoutubeRow = (ytItem) => {
     const isSelected = selectedIds.has(ytItem.id);
+    // downloadingKey has shape `youtube-<id>-<optionKey>` - match on the
+    // item id prefix so the row shows progress no matter which quality
+    // option was picked in the sheet.
+    const isDownloading = !!downloadingKey && downloadingKey.startsWith(`youtube-${ytItem.id}-`);
+    const downloadedKey = [...downloadedIds].find((k) => k.startsWith(`youtube-${ytItem.id}-`));
+    const isDownloaded = !!downloadedKey;
+
     return (
       <View key={`youtube-${ytItem.id}`} style={styles.glassCard}>
         <TouchableOpacity
@@ -413,6 +452,31 @@ export default function SearchScreen({ onTrackPress }) {
           </View>
           <Text style={styles.rowDuration}>{formatDuration(ytItem.duration)}</Text>
         </TouchableOpacity>
+
+        {isDownloading ? (
+          <View style={styles.downloadWrap}>
+            <Text style={styles.downloadPct}>{Math.round(downloadProgress * 100)}%</Text>
+          </View>
+        ) : isDownloaded ? (
+          <TouchableOpacity
+            onPress={() =>
+              onTrackPress &&
+              onTrackPress({
+                provider: "youtube",
+                id: ytItem.id,
+                type: "audio",
+                title: ytItem.title,
+                artist: ytItem.uploader,
+                artwork: ytItem.thumbnail,
+                duration: ytItem.duration,
+              })
+            }
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.downloadTouch}
+          >
+            <Text style={styles.downloadGlyph}>Play</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   };
@@ -475,7 +539,7 @@ export default function SearchScreen({ onTrackPress }) {
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={runSearch}
-            placeholder="Song, artist, podcast..."
+            placeholder="TEST123 search..."
             placeholderTextColor="rgba(255,255,255,0.5)"
             returnKeyType="search"
             style={styles.input}

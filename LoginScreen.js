@@ -29,7 +29,7 @@ import { gatewayHeaders } from "./apiClient";
 // user record in AsyncStorage under "b24_auth".
 // ---------------------------------------------------------------------------
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 const AUTH_STORAGE_KEY = "b24_auth";
 
 const TEAL_DARK = "#0b3d4c";

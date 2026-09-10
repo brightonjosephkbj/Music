@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system/legacy";
 import { API_BASE, authedHeaders } from "./apiClient";
 
 const AUTH_STORAGE_KEY = "b24_auth";
@@ -24,11 +25,9 @@ export async function lookupUsername(username) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.ok) throw new Error(data.error || "Lookup failed");
-  return data.data; // profile object or null
+  return data.data;
 }
 
-// Sends a friend request to a username. Backend handles "already sent",
-// "already friends" etc as errors - surface data.error to the UI as-is.
 export async function sendFriendRequest(userId, friendUsername) {
   const res = await fetch(`${API_BASE}/api/db/friends/request`, {
     method: "POST",
@@ -40,7 +39,6 @@ export async function sendFriendRequest(userId, friendUsername) {
   return data.data;
 }
 
-// Accepted friends only - this is the Inbox screen's friend list.
 export async function listFriends(userId) {
   const res = await fetch(`${API_BASE}/api/db/friends/list/${userId}`, {
     headers: await authedHeaders(),
@@ -50,7 +48,6 @@ export async function listFriends(userId) {
   return data.data || [];
 }
 
-// Tracks shared TO this user. unseenOnly=true is what drives the green dot.
 export async function getShareInbox(userId, { unseenOnly = false, app = "music" } = {}) {
   const params = new URLSearchParams({ app, unseen_only: String(unseenOnly) });
   const res = await fetch(`${API_BASE}/api/db/shares/inbox/${userId}?${params.toString()}`, {
@@ -74,9 +71,6 @@ export async function markSharesSeen(userId, shareIds) {
 }
 
 // --- share_thread patch marker ---
-// Full share history with one friend, both directions (sent + received),
-// oldest first. Each item carries a "direction" field ("sent"/"received")
-// relative to userId, set server-side.
 export async function getShareThread(userId, friendId, { app = "music" } = {}) {
   const params = new URLSearchParams({ app });
   const res = await fetch(
@@ -88,10 +82,6 @@ export async function getShareThread(userId, friendId, { app = "music" } = {}) {
   return data.data || [];
 }
 
-// Sends a track to a friend. Backend rejects with "not_friends" (403)
-// if the two users aren't accepted friends - surface that specifically
-// so the UI can show "You need to be friends to share".
-// Pending friend requests sent TO this user (where they are the recipient).
 export async function getPendingRequests(userId) {
   const res = await fetch(`${API_BASE}/api/db/friends/pending/${userId}`, {
     headers: await authedHeaders(),
@@ -101,7 +91,6 @@ export async function getPendingRequests(userId) {
   return data.data || [];
 }
 
-// Accept or decline a friend request. action = "accept" or "decline".
 export async function respondToFriendRequest(userId, requesterId, action) {
   const res = await fetch(`${API_BASE}/api/db/friends/respond`, {
     method: "POST",
@@ -109,7 +98,7 @@ export async function respondToFriendRequest(userId, requesterId, action) {
     body: JSON.stringify({
       user_id: userId,
       requester_id: requesterId,
-      action: action, // "accept" or "decline"
+      action: action,
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -118,7 +107,13 @@ export async function respondToFriendRequest(userId, requesterId, action) {
 }
 
 /* pending_requests_patch */
-export async function sendShare(fromUserId, toUserId, item) {
+// item_meta now carries an optional "message" alongside title/artist/
+// artwork_url. Folded into item_meta (not a new top-level field) so this
+// works with no backend change IF item_meta is already stored as a JSON
+// blob column - which is the likely case given how flexible it already is.
+// If shares.item_meta is separate DB columns instead, you'll need to add a
+// message column and accept it in the /api/db/shares/send route.
+export async function sendShare(fromUserId, toUserId, item, message) {
   const res = await fetch(`${API_BASE}/api/db/shares/send`, {
     method: "POST",
     headers: await authedHeaders({ "Content-Type": "application/json" }),
@@ -128,7 +123,10 @@ export async function sendShare(fromUserId, toUserId, item) {
       app: "music",
       item_type: item.item_type || "track",
       item_id: item.item_id,
-      item_meta: item.item_meta || null,
+      item_meta: {
+        ...(item.item_meta || {}),
+        ...(message ? { message } : {}),
+      },
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -139,4 +137,119 @@ export async function sendShare(fromUserId, toUserId, item) {
   }
   if (!res.ok || !data.ok) throw new Error(data.error || "Failed to send share");
   return data.data;
+}
+
+// ---------------------------------------------------------------------------
+// Group (collaborative) playlists — backend-owned metadata, real-time via
+// Socket.IO direct to B24_Database (not proxied through the gateway).
+// ---------------------------------------------------------------------------
+
+export async function createGroupPlaylist(userId, name, memberIds = []) {
+  const res = await fetch(`${API_BASE}/api/db/group-playlists/create`, {
+    method: "POST",
+    headers: await authedHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ name, created_by: userId, member_ids: memberIds }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || "Failed to create group playlist");
+  return data.data;
+}
+
+export async function listGroupPlaylists(userId) {
+  const res = await fetch(`${API_BASE}/api/db/group-playlists/list/${userId}`, {
+    headers: await authedHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || "Failed to load group playlists");
+  return data.data || [];
+}
+
+export async function getGroupPlaylistTracks(playlistId) {
+  const res = await fetch(`${API_BASE}/api/db/group-playlists/${playlistId}/tracks`, {
+    headers: await authedHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || "Failed to load group playlist tracks");
+  return data.data || [];
+}
+
+export async function addGroupPlaylistTrack(playlistId, userId, track) {
+  const res = await fetch(`${API_BASE}/api/db/group-playlists/${playlistId}/tracks/add`, {
+    method: "POST",
+    headers: await authedHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      added_by: userId,
+      title: track.title,
+      artist: track.artist,
+      duration: track.duration,
+      artwork_url: track.artwork_url,
+      source_url: track.source_url,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || "Failed to add track");
+  return data.data;
+}
+
+export async function deleteGroupPlaylistTrack(playlistId, trackId, userId) {
+  const res = await fetch(`${API_BASE}/api/db/group-playlists/${playlistId}/tracks/${trackId}/delete`, {
+    method: "POST",
+    headers: await authedHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ user_id: userId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || "Failed to remove track");
+  return data;
+}
+
+export async function getGroupPlaylistMembers(playlistId) {
+  const res = await fetch(`${API_BASE}/api/db/group-playlists/${playlistId}/members`, {
+    headers: await authedHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || "Failed to load members");
+  return data.data || [];
+}
+
+export async function updateGroupPlaylist(playlistId, userId, patch) {
+  const res = await fetch(`${API_BASE}/api/db/group-playlists/${playlistId}/update`, {
+    method: "POST",
+    headers: await authedHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ user_id: userId, ...patch }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) {
+    const err = new Error(data.error || "Failed to update playlist");
+    err.code = data.error;
+    throw err;
+  }
+  return data;
+}
+
+// Uploads a local image file to the playlist-art dataset repo, returns a
+// public URL. Used for group playlist art so every member sees the same
+// image (a local device URI would only work for whoever picked it).
+export async function uploadPlaylistArt(localUri) {
+  // FileSystem.uploadAsync (not fetch+FormData) - same fix as uploadAvatar
+  // in apiClient.js: the picker's URI is often a content:// path on Android
+  // that RN's own FormData/fetch layer can't always serialize ("Unsupported
+  // FormDataPart implementation"). This is a native multipart uploader
+  // purpose-built to handle that correctly.
+  const headers = await authedHeaders(); // no Content-Type - native layer sets multipart boundary
+  const uploadRes = await FileSystem.uploadAsync(
+    `${API_BASE}/api/downloads/files/upload`,
+    localUri,
+    {
+      fieldName: "file",
+      httpMethod: "POST",
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      headers,
+      parameters: { app_id: "b24music", category: "playlist_art" },
+    }
+  );
+  const data = JSON.parse(uploadRes.body || "{}");
+  if (uploadRes.status < 200 || uploadRes.status >= 300 || !data.ok) {
+    throw new Error(data.error || "Failed to upload image");
+  }
+  return data.data.url;
 }

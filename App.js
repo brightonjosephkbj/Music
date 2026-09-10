@@ -29,10 +29,19 @@ import { checkForUpdate } from "./otaClient";
 import { DownloadsProvider } from "./DownloadsContext";
 import MusicInfo from "expo-music-info-2";
 import { getCachedArtwork, setCachedArtwork } from "./deviceArtworkCache";
-import { registerForPushNotificationsAsync } from "./notifications";
+import {
+  registerForPushNotificationsAsync,
+  addDownloadNotificationResponseListener,
+  getLastDownloadNotificationKeyAsync,
+  addShareNotificationResponseListener,
+  getLastShareFromUserIdAsync,
+} from "./notifications";
+import { registerPushToken } from "./apiClient";
+import { listFriends } from "./shareClient";
 import LoginScreen, { getStoredAuth, clearStoredAuth, updateStoredAuth } from "./LoginScreen";
 import { generateAIPlaylist } from "./aiPlaylist";
 import { registerPlaybackControls, initMediaControls } from "./playbackBridge";
+import { updateNowPlayingWidget } from "./nowPlayingWidget";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Device-scanned tracks skip ID3 reading in bulk (see localMediaScanner.js -
@@ -147,15 +156,72 @@ export default function App() {
     })();
   }, []);
 
-  // Requests notification permission once on launch - covers both the
-  // lock-screen playback notification (Android 13+) and push token
-  // registration in one grant. Token is currently just logged; wire it
-  // to a backend endpoint once you've got somewhere to send it.
+  // Requests notification permission and, once signed in, registers the
+  // resulting Expo push token with the backend so shares/send can actually
+  // reach this device. Waits on authUser since the token has to be
+  // associated with a real user id.
   useEffect(() => {
+    if (!authUser?.id) return;
     registerForPushNotificationsAsync().then((token) => {
-      if (token) console.log("[push] token:", token);
+      if (!token) return;
+      registerPushToken(authUser.id, token).catch((e) =>
+        console.warn("[push] failed to register token with backend:", e.message)
+      );
     });
+  }, [authUser?.id]);
+
+  // Tapping a download-progress/download-complete notification opens the
+  // Library tab. Doesn't jump to the Downloads sub-tab specifically yet -
+  // LibraryScreen manages that internally - but gets the user to the right
+  // screen with one tap, which is what we're testing first.
+  useEffect(() => {
+    const openLibraryFromDownloadNotification = () => {
+      setActiveDrawerScreen(null);
+      setSelectedShareFriend(null);
+      setActiveNav("library");
+    };
+
+    // Cold-start case: app was fully closed, user tapped the notification
+    // to relaunch it.
+    getLastDownloadNotificationKeyAsync().then((key) => {
+      if (key) openLibraryFromDownloadNotification();
+    });
+
+    // Warm case: app already running (foreground or backgrounded).
+    const subscription = addDownloadNotificationResponseListener(() => {
+      openLibraryFromDownloadNotification();
+    });
+    return () => subscription.remove();
   }, []);
+
+  // Tapping a "friend sent you a song" push opens that friend's share
+  // thread directly. Looks the friend up from the accepted-friends list
+  // by id rather than trusting anything else in the push payload, in case
+  // the friendship changed between send and tap. Falls back to the plain
+  // Inbox list if the friend can't be found for any reason.
+  useEffect(() => {
+    const openShareThreadFor = async (fromUserId) => {
+      if (!authUser?.id || !fromUserId) return;
+      setSelectedShareFriend(null);
+      setActiveDrawerScreen("inbox");
+      try {
+        const friends = await listFriends(authUser.id);
+        const friend = friends.find((f) => f.id === fromUserId);
+        if (friend) setSelectedShareFriend(friend);
+      } catch (e) {
+        // Plain Inbox list is still a fine fallback if this lookup fails.
+      }
+    };
+
+    getLastShareFromUserIdAsync().then((fromUserId) => {
+      if (fromUserId) openShareThreadFor(fromUserId);
+    });
+
+    const subscription = addShareNotificationResponseListener((fromUserId) => {
+      openShareThreadFor(fromUserId);
+    });
+    return () => subscription.remove();
+  }, [authUser?.id]);
 
   // Turns on the lock-screen / notification media session once, at launch.
   // Separate from registerPlaybackControls below, which re-fires on every
@@ -272,6 +338,17 @@ export default function App() {
     });
   }, [engine.isPlaying, engine.position, engine.duration, nowPlaying, queue, queueIndex]);
 
+  // Push the current track/playback state to the home-screen widget
+  // whenever either changes. No-op if the widget isn't placed on any
+  // home screen (requestWidgetUpdate() handles that internally).
+  useEffect(() => {
+    updateNowPlayingWidget(nowPlaying, {
+      isPlaying: engine.isPlaying,
+      position: engine.position,
+      duration: engine.duration,
+    });
+  }, [nowPlaying, engine.isPlaying, engine.position, engine.duration]);
+
   const expandPlayer = () => setPlayerExpanded(true);
   const collapsePlayer = () => setPlayerExpanded(false);
 
@@ -371,20 +448,20 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-    <DownloadsProvider>
-      <AppShell
-        activeNav={activeNav}
-        onNavPress={setActiveNav}
-        nowPlaying={nowPlaying}
-        engine={engine}
-        playerExpanded={playerExpanded}
-        onExpandPress={expandPlayer}
-        onCollapsePress={collapsePlayer}
-        onSkipNext={nextTrack}
-        onSkipPrev={prevTrack}
-      >
-        {content}
-      </AppShell>
+      <DownloadsProvider>
+        <AppShell
+          activeNav={activeNav}
+          onNavPress={setActiveNav}
+          nowPlaying={nowPlaying}
+          engine={engine}
+          playerExpanded={playerExpanded}
+          onExpandPress={expandPlayer}
+          onCollapsePress={collapsePlayer}
+          onSkipNext={nextTrack}
+          onSkipPrev={prevTrack}
+        >
+          {content}
+        </AppShell>
 
       {playerExpanded && nowPlaying && !isVideo && (
         <PlayerCard
@@ -400,12 +477,12 @@ export default function App() {
       )}
       {playerExpanded && nowPlaying && isVideo && (
         <FullscreenVideoPlayer
-            track={nowPlaying}
-            engine={engine}
-            onClose={collapsePlayer}
-            onNext={nextTrack}
-            onPrev={prevTrack}
-          />
+          track={nowPlaying}
+          engine={engine}
+          onClose={collapsePlayer}
+          onNext={nextTrack}
+          onPrev={prevTrack}
+        />
       )}
 
       {updateInfo && (

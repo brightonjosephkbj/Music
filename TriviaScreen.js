@@ -12,7 +12,7 @@ import { LinearGradient } from "expo-linear-gradient";
 
 import { authedHeaders } from "./apiClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 const ACCENT = "#FFD166"; // Trivia tile accent from the Glass Drawer
 const GLASS_BG = "rgba(255,255,255,0.14)";
 const GLASS_BORDER = "rgba(255,255,255,0.25)";

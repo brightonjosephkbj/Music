@@ -13,7 +13,7 @@ import { LinearGradient } from "expo-linear-gradient";
 // Points at your deployed b24meet backend.
 import { authedHeaders } from "./apiClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 const ACCENT = "#FFA751"; // Jokes tile accent from the Glass Drawer
 
 const CATEGORIES = ["Any", "Misc", "Programming", "Dark", "Pun", "Spooky", "Christmas"];

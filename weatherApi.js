@@ -1,6 +1,6 @@
 import { authedHeaders } from "./apiClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 
 // A curated set of well-known cities with lat/lon baked in, so the
 // "random weather in different places" cards don't need a geocode

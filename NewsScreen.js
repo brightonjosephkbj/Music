@@ -17,7 +17,7 @@ import { WebView } from "react-native-webview";
 
 import { authedHeaders } from "./apiClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 const ACCENT = "#6BCB77"; // News tile accent from the Glass Drawer
 
 const CATEGORIES = ["general", "world", "business", "technology", "sports", "entertainment"];

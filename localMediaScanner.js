@@ -1,4 +1,5 @@
 import * as MediaLibrary from "expo-media-library/legacy";
+import * as VideoThumbnails from "expo-video-thumbnails";
 import { parseLibraryFilename } from "./libraryFileNaming";
 
 // Scans the WHOLE device for audio/video, not just the app's own "B24
@@ -10,19 +11,34 @@ import { parseLibraryFilename } from "./libraryFileNaming";
 // just falls back to whatever parseLibraryFilename does with an arbitrary
 // filename.
 
-function toLibraryItem(asset, type) {
+function toLibraryItem(asset, type, artwork = null) {
   const { title, artist } = parseLibraryFilename(asset.filename);
   return {
     id: `device_${asset.id}`,
     type, // "audio" | "video"
     title,
     artist,
-    artwork: null,
+    artwork,
     localUri: asset.uri,
     duration: asset.duration || 0,
     source: "device", // distinguishes scanned files from app-initiated downloads
     addedAt: asset.creationTime || Date.now(),
   };
+}
+
+// Generates a real frame thumbnail for a video asset so the Videos tab has
+// something to show instead of a blank tile. Falls back to no artwork (not
+// a thrown error) if a given file can't be decoded - corrupt/odd-codec
+// files shouldn't take the whole scan down with them.
+async function toVideoLibraryItem(asset) {
+  let artwork = null;
+  try {
+    const { uri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
+    artwork = uri;
+  } catch (err) {
+    console.warn("[toVideoLibraryItem] thumbnail failed for", asset.filename, err.message);
+  }
+  return toLibraryItem(asset, "video", artwork);
 }
 
 // Call this from a "Scan device" button. Returns { granted, audio, video }.
@@ -60,7 +76,7 @@ export async function scanDeviceMedia() {
     return {
       granted: true,
       audio: audioResult.assets.map((a) => toLibraryItem(a, "audio")),
-      video: videoResult.assets.map((a) => toLibraryItem(a, "video")),
+      video: await Promise.all(videoResult.assets.map(toVideoLibraryItem)),
       error: null,
     };
   } catch (err) {

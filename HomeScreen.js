@@ -27,7 +27,7 @@ import MoviesRow from "./MoviesRow";
 import { authedHeaders } from "./apiClient";
 import { getCurrentUser, getShareInbox } from "./shareClient";
 
-const API_BASE = "https://gateway-cah4.onrender.com";
+const API_BASE = "https://gateway-b0tx.onrender.com";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.78;
