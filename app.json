@@ -93,8 +93,7 @@
             }
           ]
         }
-      ],
-      "react-native-image-colors"
+      ]
     ],
     "runtimeVersion": {
       "policy": "appVersion"
