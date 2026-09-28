@@ -42,6 +42,7 @@ import LoginScreen, { getStoredAuth, clearStoredAuth, updateStoredAuth } from ".
 import { generateAIPlaylist } from "./aiPlaylist";
 import { registerPlaybackControls, initMediaControls } from "./playbackBridge";
 import { updateNowPlayingWidget } from "./nowPlayingWidget";
+import { fetchLyrics, activeLyricIndex } from "./lyricsClient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Device-scanned tracks skip ID3 reading in bulk (see localMediaScanner.js -
@@ -324,6 +325,40 @@ export default function App() {
   // Expose live playback controls to the home screen widget's click
   // handler, which runs outside the normal React tree (see
   // playbackBridge.js and widget-task-handler.js).
+  // Lyrics for the widget's subtitle line - separate fetch from
+  // PlayerCard.js's own (see lyricsClient.js), sharing the same cache key.
+  const [widgetLyrics, setWidgetLyrics] = useState([]);
+  const [widgetLyricsReady, setWidgetLyricsReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setWidgetLyrics([]);
+    setWidgetLyricsReady(false);
+    if (!nowPlaying?.artist || !nowPlaying?.title) return;
+    fetchLyrics(nowPlaying).then((data) => {
+      if (cancelled) return;
+      setWidgetLyrics(data.lyrics || []);
+      setWidgetLyricsReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [nowPlaying?.artist, nowPlaying?.title]);
+
+  // null while loading (widget shows artist); "Lyrics not found" once
+  // loaded with nothing; the active synced line once reached; null before
+  // the first synced line (falls back to artist too).
+  const widgetLyricIdx = activeLyricIndex(widgetLyrics, engine.position);
+  const currentLyricLine = !widgetLyricsReady
+    ? null
+    : widgetLyrics.length === 0
+    ? "Lyrics not found"
+    : widgetLyricIdx >= 0
+    ? widgetLyrics[widgetLyricIdx]?.text || null
+    : null;
+
+  // Expose live playback controls to the home screen widget's click
+  // handler, which runs outside the normal React tree (see
+  // playbackBridge.js and widget-task-handler.js).
   useEffect(() => {
     registerPlaybackControls({
       toggle: () => engine.toggle(),
@@ -334,20 +369,22 @@ export default function App() {
         track: nowPlaying,
         position: engine.position,
         duration: engine.duration,
+        lyricLine: currentLyricLine,
       }),
     });
-  }, [engine.isPlaying, engine.position, engine.duration, nowPlaying, queue, queueIndex]);
+  }, [engine.isPlaying, engine.position, engine.duration, nowPlaying, queue, queueIndex, currentLyricLine]);
 
-  // Push the current track/playback state to the home-screen widget
-  // whenever either changes. No-op if the widget isn't placed on any
-  // home screen (requestWidgetUpdate() handles that internally).
+  // Push the current track/playback state to the home-screen widget.
+  // updateNowPlayingWidget() throttles the actual native push internally,
+  // so calling this on every position tick is safe.
   useEffect(() => {
     updateNowPlayingWidget(nowPlaying, {
       isPlaying: engine.isPlaying,
       position: engine.position,
       duration: engine.duration,
+      lyricLine: currentLyricLine,
     });
-  }, [nowPlaying, engine.isPlaying, engine.position, engine.duration]);
+  }, [nowPlaying, engine.isPlaying, engine.position, engine.duration, currentLyricLine]);
 
   const expandPlayer = () => setPlayerExpanded(true);
   const collapsePlayer = () => setPlayerExpanded(false);

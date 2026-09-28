@@ -31,7 +31,6 @@ import {
   deletePlaylist,
 } from "./libraryStorage";
 import ContextMenuCard from "./ContextMenuCard";
-import useArtworkAccent from "./useArtworkAccent";
 import ImageViewer from "./ImageViewer";
 import { scanDeviceMedia } from "./localMediaScanner";
 import { useDownloads } from "./DownloadsContext";
@@ -788,12 +787,10 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     setImageViewerVisible(true);
   }, [allMedia]);
 
-  const plFallbackAccent = useMemo(
+  const plAccent = useMemo(
     () => playlistAccent(selectedPlaylist ? selectedPlaylist.trackIds || [] : []),
     [selectedPlaylist]
   );
-  const plArtForColor = selectedPlaylist ? getPlaylistArt(selectedPlaylist) : null;
-  const plAccent = useArtworkAccent(plArtForColor && plArtForColor.uri, plFallbackAccent);
 
   const renderTrackRow = useCallback(
     ({ item }) => {

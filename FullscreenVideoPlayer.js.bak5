@@ -386,7 +386,6 @@ function PlayerInner({
           style={StyleSheet.absoluteFill}
           contentFit="contain"
           nativeControls={false}
-          surfaceType="textureView"
         />
       </View>
 
@@ -442,10 +441,10 @@ function PlayerInner({
       )}
 
       {/* CONTROLS */}
-      {(
+      {chromeVisible && (
         <Animated.View
-          style={[styles.chrome, { opacity: controlsOpacity, zIndex: 10, elevation: 10 }]}
-          pointerEvents={chromeVisible ? "box-none" : "none"}
+          style={[styles.chrome, { opacity: controlsOpacity }]}
+          pointerEvents="box-none"
         >
           <Fade position="top" height={190} peak={0.82} />
 

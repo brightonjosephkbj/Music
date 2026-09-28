@@ -18,7 +18,7 @@ const ACCENT = "#B2D5E5";
 const SWIPE_THRESHOLD = 60;
 const TAP_THRESHOLD = 10;
 const DOUBLE_TAP_DELAY = 280;
-const CONTROLS_TIMEOUT = 600000;
+const CONTROLS_TIMEOUT = 4000;
 const SEEK_AMOUNT = 10;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -386,7 +386,6 @@ function PlayerInner({
           style={StyleSheet.absoluteFill}
           contentFit="contain"
           nativeControls={false}
-          surfaceType="textureView"
         />
       </View>
 
@@ -442,10 +441,10 @@ function PlayerInner({
       )}
 
       {/* CONTROLS */}
-      {(
+      {chromeVisible && (
         <Animated.View
-          style={[styles.chrome, { opacity: controlsOpacity, zIndex: 10, elevation: 10 }]}
-          pointerEvents={chromeVisible ? "box-none" : "none"}
+          style={[styles.chrome, { opacity: controlsOpacity }]}
+          pointerEvents="box-none"
         >
           <Fade position="top" height={190} peak={0.82} />
 

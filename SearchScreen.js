@@ -16,6 +16,7 @@ import { BlurView } from "expo-blur";
 import * as FileSystem from "expo-file-system/legacy";
 import { getDownloads, saveDownloads, addDownloadEntry } from "./libraryStorage";
 import { useDownloads } from "./DownloadsContext";
+import useSuggestions from "./useSuggestions";
 
 import { authedHeaders } from "./apiClient";
 import { lightningExtract } from "./urlFetchClient";
@@ -77,6 +78,8 @@ export default function SearchScreen({ onTrackPress }) {
   const [error, setError] = useState(null);
   const [categories, setCategories] = useState({}); // { music: [...], podcast: [...], ... }
   const [searched, setSearched] = useState(false);
+  const [showSuggest, setShowSuggest] = useState(false);
+  const suggestions = useSuggestions(showSuggest ? query : "");
 
   const [downloadingKey, setDownloadingKey] = useState(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -108,8 +111,10 @@ export default function SearchScreen({ onTrackPress }) {
     });
   };
 
-  const runSearch = async () => {
-    const q = query.trim();
+  const runSearch = async (override) => {
+    const q = (typeof override === "string" ? override : query).trim();
+    setShowSuggest(false);
+    if (typeof override === "string") setQuery(override);
     if (!q) return;
     setLoading(true);
     setError(null);
@@ -537,9 +542,10 @@ export default function SearchScreen({ onTrackPress }) {
         <View style={styles.inputRow}>
           <TextInput
             value={query}
-            onChangeText={setQuery}
+            onChangeText={(t) => { setQuery(t); setShowSuggest(true); }}
+            onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
             onSubmitEditing={runSearch}
-            placeholder="TEST123 search..."
+            placeholder="Search..."
             placeholderTextColor="rgba(255,255,255,0.5)"
             returnKeyType="search"
             style={styles.input}
@@ -548,6 +554,16 @@ export default function SearchScreen({ onTrackPress }) {
             <Text style={styles.searchButtonText}>Search</Text>
           </TouchableOpacity>
         </View>
+
+        {showSuggest && suggestions.length > 0 && (
+          <View style={styles.suggestBox}>
+            {suggestions.map((sg) => (
+              <TouchableOpacity key={sg} style={styles.suggestRow} onPress={() => runSearch(sg)}>
+                <Text numberOfLines={1} style={styles.suggestText}>{sg}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {loading && <ActivityIndicator color={ORCHID} style={{ marginTop: 24 }} />}
 
@@ -691,6 +707,22 @@ const styles = StyleSheet.create({
   },
   searchButton: { backgroundColor: ACCENT, borderRadius: 20, paddingHorizontal: 20, justifyContent: "center" },
   searchButtonText: { color: ACCENT_ON, fontWeight: "700", fontSize: 14 },
+
+  suggestBox: {
+    backgroundColor: "rgba(29,29,29,0.95)",
+    borderWidth: 1,
+    borderColor: GLASS_BORDER,
+    borderRadius: 16,
+    marginTop: 8,
+    overflow: "hidden",
+  },
+  suggestRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: GLASS_BORDER,
+  },
+  suggestText: { color: TEXT_PRIMARY, fontSize: 14 },
 
   hint: { color: TEXT_SECONDARY, fontSize: 13, marginTop: 24, textAlign: "center" },
   emptyText: { color: TEXT_SECONDARY, fontSize: 13, marginTop: 24, textAlign: "center" },

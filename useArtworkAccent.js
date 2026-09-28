@@ -1,0 +1,79 @@
+import { useEffect, useState } from "react";
+
+// Native module may be missing on old APKs - never crash, just fall back.
+let ImageColors = null;
+try {
+  ImageColors = require("react-native-image-colors");
+} catch (e) {}
+
+const cache = {};
+
+function hexToHsl(hex) {
+  const m = /^#?([0-9a-f]{6})/i.exec(hex || "");
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d) {
+    s = d / (1 - Math.abs(2 * l - 1));
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = Math.round(h * 60);
+    if (h < 0) h += 360;
+  }
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function accentFromHex(hex) {
+  const c = hexToHsl(hex);
+  if (!c) return null;
+  const s = Math.max(65, Math.min(95, c.s));
+  return {
+    solid: `hsl(${c.h},${s}%,70%)`,
+    glow: `hsl(${c.h},${s}%,58%)`,
+    soft: `hsla(${c.h},${s}%,60%,0.16)`,
+    border: `hsla(${c.h},${s}%,70%,0.45)`,
+    tint: `hsla(${c.h},${s}%,45%,0.38)`,
+  };
+}
+
+// Returns an accent object shaped like the hash-based one; `fallback` is used
+// until (or unless) real colours are extracted from the artwork.
+export default function useArtworkAccent(uri, fallback) {
+  const [accent, setAccent] = useState(uri && cache[uri] ? cache[uri] : null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!uri) {
+      setAccent(null);
+      return;
+    }
+    if (cache[uri]) {
+      setAccent(cache[uri]);
+      return;
+    }
+    setAccent(null);
+    (async () => {
+      try {
+        const getColors = ImageColors && (ImageColors.getColors || (ImageColors.default && ImageColors.default.getColors));
+        if (!getColors) return;
+        const res = await getColors(uri, { fallback: "#3a7bd5", cache: true, key: uri, quality: "low" });
+        const hex = res.vibrant || res.dominant || res.lightVibrant || res.average || res.background;
+        const a = accentFromHex(hex);
+        if (a) {
+          cache[uri] = a;
+          if (!cancelled) setAccent(a);
+        }
+      } catch (e) {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+
+  return accent || fallback;
+}

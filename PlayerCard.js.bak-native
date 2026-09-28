@@ -24,7 +24,6 @@ import { addDownload, isDownloaded } from "./libraryStorage";
 import { buildLibraryFilename, B24_ALBUM_NAME } from "./libraryFileNaming";
 import { gatewayHeaders } from "./apiClient";
 import { fetchLyrics, activeLyricIndex } from "./lyricsClient";
-import useArtworkAccent from "./useArtworkAccent";
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
 const TABS = ["Song", "Lyrics", "Related"];
@@ -75,7 +74,7 @@ export default function PlayerCard({
   const { width: W, height: H } = useWindowDimensions();
   const topPad = (StatusBar.currentHeight || 28) + 6;
   const coverSize = Math.min(W - 64, H * 0.4);
-  const A = useArtworkAccent(track?.artwork, trackAccent(track));
+  const A = trackAccent(track);
 
   const [panel, setPanel] = useState(0);
   const scrollRef = useRef(null);

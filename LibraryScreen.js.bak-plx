@@ -31,7 +31,6 @@ import {
   deletePlaylist,
 } from "./libraryStorage";
 import ContextMenuCard from "./ContextMenuCard";
-import useArtworkAccent from "./useArtworkAccent";
 import ImageViewer from "./ImageViewer";
 import { scanDeviceMedia } from "./localMediaScanner";
 import { useDownloads } from "./DownloadsContext";
@@ -67,25 +66,6 @@ function formatDuration(sec) {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
-}
-
-function plHash(str) {
-  let h = 5381;
-  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-// Accent colour derived from the playlist's songs (stable per playlist).
-function playlistAccent(ids) {
-  const key = (ids || []).slice(0, 8).join("|") || "empty";
-  const h = plHash(key) % 360;
-  return {
-    solid: `hsl(${h},85%,70%)`,
-    glow: `hsl(${h},95%,58%)`,
-    soft: `hsla(${h},85%,60%,0.16)`,
-    border: `hsla(${h},85%,70%,0.45)`,
-    tint: `hsla(${h},80%,45%,0.35)`,
-  };
 }
 
 let deviceMediaCache = null;
@@ -788,26 +768,13 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     setImageViewerVisible(true);
   }, [allMedia]);
 
-  const plFallbackAccent = useMemo(
-    () => playlistAccent(selectedPlaylist ? selectedPlaylist.trackIds || [] : []),
-    [selectedPlaylist]
-  );
-  const plArtForColor = selectedPlaylist ? getPlaylistArt(selectedPlaylist) : null;
-  const plAccent = useArtworkAccent(plArtForColor && plArtForColor.uri, plFallbackAccent);
-
   const renderTrackRow = useCallback(
     ({ item }) => {
       const inPlaylistEditMode = !!selectedPlaylist && editModeActive;
       const isChecked = editSelectedIds.has(item.id);
-      const isPl = !!selectedPlaylist;
-      const isPlActive = isPl && currentTrackId != null && currentTrackId === item.id;
       return (
         <TouchableOpacity
-          style={[
-            styles.row,
-            isPl && styles.plxRow,
-            isPlActive && { backgroundColor: plAccent.soft, borderColor: plAccent.border },
-          ]}
+          style={styles.row}
           onPress={() => {
             if (inPlaylistEditMode) {
               setEditSelectedIds((prev) => {
@@ -832,7 +799,6 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
           onLongPress={(evt) => !inPlaylistEditMode && openMenu(evt, item)}
           delayLongPress={300}
         >
-          {isPlActive && <View style={[styles.plxBar, { backgroundColor: plAccent.solid }]} />}
           {inPlaylistEditMode && (
             <View style={[styles.editCheckbox, isChecked && styles.editCheckboxChecked]}>
               {isChecked && <Ionicons name="checkmark" size={14} color="#000" />}
@@ -840,28 +806,18 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
           )}
           <Image source={item.artwork ? { uri: item.artwork } : undefined} style={styles.rowArt} />
           <View style={styles.rowTextWrap}>
-            <Text numberOfLines={1} style={[styles.rowTitle, isPlActive && { color: plAccent.solid }]}>{item.title}</Text>
+            <Text numberOfLines={1} style={styles.rowTitle}>{item.title}</Text>
             {!!item.artist && <Text numberOfLines={1} style={styles.rowArtist}>{item.artist}</Text>}
           </View>
-          {isPlActive && <Ionicons name="stats-chart" size={15} color={plAccent.solid} style={{ marginRight: 10 }} />}
           {item.type === "image" ? (
             <Text style={styles.rowDuration}>Image</Text>
           ) : (
             <Text style={styles.rowDuration}>{formatDuration(item.duration)}</Text>
           )}
-          {isPl && !inPlaylistEditMode && (
-            <TouchableOpacity
-              style={styles.plxMore}
-              onPress={(evt) => openMenu(evt, item)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="ellipsis-vertical" size={16} color="rgba(255,255,255,0.55)" />
-            </TouchableOpacity>
-          )}
         </TouchableOpacity>
       );
     },
-    [downloads, onTrackPress, activeTab, videos, allSongs, selectedFolder, selectedPlaylist, selectedArtist, folderItems, filteredPlaylistItems, artistTracks, openImage, openMenu, editModeActive, editSelectedIds, currentTrackId, plAccent]
+    [downloads, onTrackPress, activeTab, videos, allSongs, selectedFolder, selectedPlaylist, selectedArtist, folderItems, filteredPlaylistItems, artistTracks, openImage, openMenu, editModeActive, editSelectedIds]
   );
 
   const renderGroupTrackRow = useCallback(
@@ -967,78 +923,109 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   const renderPlaylistDetailHeader = () => {
     if (!selectedPlaylist) return null;
     const art = getPlaylistArt(selectedPlaylist);
-    const A = plAccent;
 
     return (
-      <View style={styles.plxHeader}>
-        {/* Cover with accent glow */}
-        <View style={[styles.plxCoverWrap, { shadowColor: A.glow, borderColor: A.border }]}>
+      <View style={styles.spotifyHeaderContainer}>
+        {/* Cover Art */}
+        <View style={styles.spotifyCoverArtWrap}>
           {art ? (
-            <Image source={art} style={styles.plxCover} />
+            <Image source={art} style={styles.spotifyCoverArt} />
           ) : (
-            <View style={[styles.plxCover, styles.plxPlaceholder]}>
+            <View style={[styles.spotifyCoverArt, styles.spotifyArtPlaceholder]}>
               <Ionicons name="musical-notes" size={60} color="rgba(255,255,255,0.4)" />
             </View>
           )}
         </View>
 
-        {/* Title + meta */}
-        <Text style={styles.plxTitle} numberOfLines={2}>{selectedPlaylist.name}</Text>
-        <View style={styles.plxSourceRow}>
-          <View style={[styles.plxDot, { backgroundColor: A.solid }]} />
-          <Text style={styles.plxSourceText}>Made for you</Text>
+        {/* Playlist Title & Meta */}
+        <Text style={styles.spotifyTitle}>{selectedPlaylist.name}</Text>
+        <View style={styles.spotifySourceRow}>
+          <View style={styles.spotifyDot} />
+          <Text style={styles.spotifySourceText}>Made for you</Text>
         </View>
-        <Text style={styles.plxMeta}>{playlistItems.length} songs</Text>
 
-        {/* Actions */}
-        <View style={styles.plxActionRow}>
+        {/* Actions Row */}
+        <View style={styles.spotifyActionBar}>
+          {/* Left: Edit pencil + track count */}
+          <View style={styles.spotifyLeftActions}>
+            <TouchableOpacity
+              style={styles.spotifyIconBtn}
+              onPress={() => {
+                setEditPlaylistTarget(selectedPlaylist);
+                setEditPlaylistName(selectedPlaylist.name);
+                setEditPlaylistArt(selectedPlaylist.art || "");
+                setEditPlaylistVisible(true);
+              }}
+            >
+              <Ionicons name="pencil" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.spotifyMetaInline}>{playlistItems.length} tracks</Text>
+          </View>
+
+          {/* Right Controls: Shuffle & Primary Play CTA */}
+          <View style={styles.spotifyRightActions}>
+            <TouchableOpacity
+              style={styles.spotifyIconBtn}
+              onPress={() => shufflePlaylist(selectedPlaylist)}
+            >
+              <Ionicons name="shuffle" size={20} color="#1ED760" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.spotifyPlayBtn}
+              onPress={() => playAllPlaylist(selectedPlaylist)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.spotifyPlayIcon}>▶</Text>
+              <Text style={styles.spotifyPlayText}>PLAY</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.pillBarScroll}
+          contentContainerStyle={styles.pillBarRow}
+        >
           <TouchableOpacity
-            style={styles.plxRoundBtn}
+            style={styles.pillChip}
             onPress={() => {
               setAddSongsSelectedIds(new Set());
               setAddSongsVisible(true);
             }}
           >
-            <Ionicons name="add" size={20} color="#fff" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.plxRoundBtn} onPress={openSortMenu}>
-            <Ionicons name="swap-vertical" size={18} color="#fff" />
+            <Ionicons name="add" size={14} color="#fff" />
+            <Text style={styles.pillChipText}>Add</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.plxRoundBtn, editModeActive && { backgroundColor: A.solid, borderColor: A.solid }]}
+            style={[styles.pillChip, editModeActive && styles.pillChipActive]}
             onPress={() => {
               setEditModeActive((prev) => !prev);
               setEditSelectedIds(new Set());
             }}
           >
-            <Ionicons name="create-outline" size={18} color={editModeActive ? "#000" : "#fff"} />
+            <Ionicons name="create-outline" size={14} color={editModeActive ? "#000" : "#fff"} />
+            <Text style={[styles.pillChipText, editModeActive && styles.pillChipTextActive]}>Edit</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.pillChip} onPress={openSortMenu}>
+            <Ionicons name="swap-vertical" size={14} color="#fff" />
+            <Text style={styles.pillChipText}>Sort</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.plxRoundBtn, findInPlaylistVisible && { backgroundColor: A.solid, borderColor: A.solid }]}
+            style={[styles.pillChip, findInPlaylistVisible && styles.pillChipActive]}
             onPress={() => {
               setFindInPlaylistVisible((prev) => !prev);
               setFindInPlaylistQuery("");
             }}
           >
-            <Ionicons name="search" size={18} color={findInPlaylistVisible ? "#000" : "#fff"} />
+            <Ionicons name="search" size={14} color={findInPlaylistVisible ? "#000" : "#fff"} />
+            <Text style={[styles.pillChipText, findInPlaylistVisible && styles.pillChipTextActive]}>Find in playlist</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.plxPlayBtn, { backgroundColor: A.solid, shadowColor: A.glow }]}
-            onPress={() => playAllPlaylist(selectedPlaylist)}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="play" size={18} color="#000" />
-            <Text style={styles.plxPlayText}>PLAY</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.plxRoundBtn} onPress={() => shufflePlaylist(selectedPlaylist)}>
-            <Ionicons name="shuffle" size={19} color={A.solid} />
-          </TouchableOpacity>
-        </View>
+        </ScrollView>
 
         {findInPlaylistVisible && (
           <TextInput
@@ -1262,26 +1249,6 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   return (
     <View style={styles.root}>
       <LinearGradient colors={GRADIENT_COLORS} style={StyleSheet.absoluteFill} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} />
-      {selectedPlaylist && (
-        <>
-          {(() => {
-            const bgArt = getPlaylistArt(selectedPlaylist);
-            return bgArt ? (
-              <Image source={bgArt} blurRadius={40} style={[StyleSheet.absoluteFill, { opacity: 0.55 }]} />
-            ) : null;
-          })()}
-          <LinearGradient
-            pointerEvents="none"
-            colors={["rgba(8,10,16,0.35)", "rgba(8,10,16,0.88)", "#080A10"]}
-            style={StyleSheet.absoluteFill}
-          />
-          <LinearGradient
-            pointerEvents="none"
-            colors={[plAccent.tint, "transparent"]}
-            style={{ position: "absolute", top: 0, left: 0, right: 0, height: 420 }}
-          />
-        </>
-      )}
 
       <View style={styles.header}>
         {detailMode ? (
@@ -2201,35 +2168,6 @@ const styles = StyleSheet.create({
   },
 
   emptyText: { color: "#B3B3B3", textAlign: "center", marginTop: 30, lineHeight: 20 },
-
-  /* Playlist detail restyle (plx) */
-  plxHeader: { paddingTop: 6, paddingBottom: 14 },
-  plxCoverWrap: {
-    alignSelf: "center", width: 200, height: 200, borderRadius: 20, borderWidth: 1.5,
-    marginBottom: 20, backgroundColor: "#000",
-    shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.9, shadowRadius: 22, elevation: 18,
-  },
-  plxCover: { width: "100%", height: "100%", borderRadius: 18 },
-  plxPlaceholder: { justifyContent: "center", alignItems: "center", backgroundColor: "rgba(255,255,255,0.06)" },
-  plxTitle: { color: "#fff", fontSize: 30, fontWeight: "900", letterSpacing: 0.3 },
-  plxSourceRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
-  plxDot: { width: 8, height: 8, borderRadius: 4, marginRight: 7 },
-  plxSourceText: { color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: "600" },
-  plxMeta: { color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "600", marginTop: 3 },
-  plxActionRow: { flexDirection: "row", alignItems: "center", marginTop: 18, gap: 7 },
-  plxRoundBtn: {
-    width: 38, height: 38, borderRadius: 19, justifyContent: "center", alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)",
-  },
-  plxPlayBtn: {
-    flex: 1, height: 44, borderRadius: 22, flexDirection: "row", justifyContent: "center",
-    alignItems: "center", gap: 6, marginLeft: 3,
-    shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 14, elevation: 10,
-  },
-  plxPlayText: { color: "#000", fontSize: 14, fontWeight: "800", letterSpacing: 1 },
-  plxRow: { paddingHorizontal: 10, borderRadius: 16, marginBottom: 4, borderWidth: 1, borderColor: "transparent" },
-  plxBar: { position: "absolute", left: 0, top: 12, bottom: 12, width: 3, borderRadius: 2 },
-  plxMore: { padding: 6, marginLeft: 4 },
 
   /* Spotify Playlist Hero View */
   spotifyHeaderContainer: {

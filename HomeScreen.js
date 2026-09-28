@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  Image,
   TouchableOpacity,
   Animated,
   PanResponder,
@@ -13,17 +12,17 @@ import {
   RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { PasteUrlCard, RecentPlayedCard } from "./HomeFeatureCards";
+import ActionTilesRow from "./HomeActionTiles";
+import ContinueListeningCard from "./HomeContinueListening";
+import MoodMixesRow from "./HomeMoodMixes";
 import { PlaylistsRow, SimilarRow, RecentlyAddedRow, ArtistsRow, PodcastsRow } from "./HomeDiscoveryRows";
-import HomeCategorySwiper from "./HomeCategorySwiper";
+import TrendingRow from "./HomeTrendingRow";
 import AnalogClock from "./AnalogClock";
 import MoviesRow from "./MoviesRow";
 
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
-// Points at your deployed b24music backend. Swap this for an env/config
-// value later if you need different URLs for dev vs. production builds.
 import { authedHeaders } from "./apiClient";
 import { getCurrentUser, getShareInbox } from "./shareClient";
 
@@ -32,13 +31,9 @@ const API_BASE = "https://gateway-b0tx.onrender.com";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.78;
 
-// Category chips under the greeting. "All" and "Trending" both read the
-// real /trending response - "New" and "Top Songs" just re-sort what we
-// already fetched, client-side, until the backend grows dedicated logic
-// for those categories.
-// The 7 Glass Drawer tiles from your plan. Each one maps to a backend
-// blueprint that already exists - "The Rest" bundles space/wiki/commons/
-// met/flights, which don't need their own top-level tile.
+// The 7 Glass Drawer tiles. Each one maps to a backend blueprint that
+// already exists - "The Rest" bundles space/wiki/commons/met/flights, which
+// don't need their own top-level tile.
 const DRAWER_TILES = [
   { key: "weather", label: "Weather", accent: "#4ECDC4" },
   { key: "jokes", label: "Jokes", accent: "#FFA751" },
@@ -49,11 +44,30 @@ const DRAWER_TILES = [
   { key: "rest", label: "The Rest", accent: "#B983FF" },
 ];
 
-// onSearchPress / onDrawerTilePress / onTrackPress are plain callbacks so
-// this screen doesn't assume any particular navigation library - wire them
-// up to whatever you're using (React Navigation, a simple state switch,
-// etc.) from the parent.
-export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPress, onPasteLinkPress, onSettingsPress, onRecentPress, onAIChatPress, onInboxPress, nowPlaying, engine }) {
+function getTimeGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+// onSearchPress / onDrawerTilePress / onTrackPress / onDownloadsPress are
+// plain callbacks so this screen doesn't assume any particular navigation
+// library - wire them up from the parent. onDownloadsPress is new - point
+// it at whichever screen shows offline/downloaded tracks.
+export default function HomeScreen({
+  onSearchPress,
+  onDrawerTilePress,
+  onTrackPress,
+  onPasteLinkPress,
+  onDownloadsPress,
+  onSettingsPress,
+  onRecentPress,
+  onAIChatPress,
+  onInboxPress,
+  nowPlaying,
+  engine,
+}) {
   const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -61,6 +75,8 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [displayName, setDisplayName] = useState(null);
+  const [unseenShareCount, setUnseenShareCount] = useState(0);
 
   // Drawer animation: translateX runs from DRAWER_WIDTH (fully hidden, off
   // the right edge of the screen) to 0 (fully open). Using core Animated +
@@ -71,19 +87,13 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
 
   const openDrawer = () => {
     setDrawerOpen(true);
-    Animated.spring(drawerX, {
-      toValue: 0,
-      useNativeDriver: true,
-      bounciness: 4,
-    }).start();
+    Animated.spring(drawerX, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
   };
 
   const closeDrawer = () => {
-    Animated.timing(drawerX, {
-      toValue: DRAWER_WIDTH,
-      duration: 220,
-      useNativeDriver: true,
-    }).start(() => setDrawerOpen(false));
+    Animated.timing(drawerX, { toValue: DRAWER_WIDTH, duration: 220, useNativeDriver: true }).start(() =>
+      setDrawerOpen(false)
+    );
   };
 
   // Swipe-left-anywhere-on-Home gesture. Only kicks in once a drag is
@@ -91,12 +101,8 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
   // the page is never hijacked, and a plain tap still behaves like a tap.
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gesture) => {
-        return (
-          Math.abs(gesture.dx) > 12 &&
-          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5
-        );
-      },
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
       onPanResponderMove: (_, gesture) => {
         if (drawerOpen) return; // the drawer's own responder owns the gesture once open
         if (gesture.dx < 0) {
@@ -108,11 +114,8 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
         if (drawerOpen) return;
         const openedFarEnough = gesture.dx < -DRAWER_WIDTH * 0.35;
         const fastSwipe = gesture.vx < -0.5;
-        if (openedFarEnough || fastSwipe) {
-          openDrawer();
-        } else {
-          closeDrawer();
-        }
+        if (openedFarEnough || fastSwipe) openDrawer();
+        else closeDrawer();
       },
     })
   ).current;
@@ -120,21 +123,15 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
   // Separate responder so the open drawer can be swiped shut on its own.
   const drawerPanResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gesture) =>
-        Math.abs(gesture.dx) > 12 && gesture.dx > 0,
+      onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 12 && gesture.dx > 0,
       onPanResponderMove: (_, gesture) => {
-        if (gesture.dx > 0) {
-          drawerX.setValue(Math.min(gesture.dx, DRAWER_WIDTH));
-        }
+        if (gesture.dx > 0) drawerX.setValue(Math.min(gesture.dx, DRAWER_WIDTH));
       },
       onPanResponderRelease: (_, gesture) => {
         const closedFarEnough = gesture.dx > DRAWER_WIDTH * 0.3;
         const fastSwipe = gesture.vx > 0.5;
-        if (closedFarEnough || fastSwipe) {
-          closeDrawer();
-        } else {
-          openDrawer();
-        }
+        if (closedFarEnough || fastSwipe) closeDrawer();
+        else openDrawer();
       },
     })
   ).current;
@@ -142,7 +139,9 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
   const fetchTrending = async () => {
     try {
       setError(null);
-      const res = await fetch(`${API_BASE}/api/apicache/api/music/search_trending?limit=15&offset=0`, { headers: await authedHeaders() });
+      const res = await fetch(`${API_BASE}/api/apicache/api/music/search_trending?limit=15&offset=0`, {
+        headers: await authedHeaders(),
+      });
       if (!res.ok) throw new Error(`Server responded ${res.status}`);
       const data = await res.json();
       const newTracks = data.tracks || [];
@@ -161,18 +160,17 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
     fetchTrending();
   }, []);
 
-  const [unseenShareCount, setUnseenShareCount] = useState(0);
-
-  // Unread shared-track count for the inbox badge. Best-effort - if this
-  // fails silently, the badge just won't show; SharedInboxScreen itself
-  // surfaces any real error when opened.
+  // Display name + inbox badge share one getCurrentUser() call - best
+  // effort, both stay silently empty if this fails.
   useEffect(() => {
     (async () => {
       try {
         const u = await getCurrentUser();
-        if (!u?.id) return;
-        const list = await getShareInbox(u.id, { unseenOnly: true, app: "music" });
-        setUnseenShareCount(list.length);
+        if (u?.username || u?.name) setDisplayName(u.username || u.name);
+        if (u?.id) {
+          const list = await getShareInbox(u.id, { unseenOnly: true, app: "music" });
+          setUnseenShareCount(list.length);
+        }
       } catch (e) {
         // non-critical
       }
@@ -194,7 +192,9 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const res = await fetch(`${API_BASE}/api/apicache/api/music/search_trending?limit=15&offset=${offset}`, { headers: await authedHeaders() });
+      const res = await fetch(`${API_BASE}/api/apicache/api/music/search_trending?limit=15&offset=${offset}`, {
+        headers: await authedHeaders(),
+      });
       if (!res.ok) throw new Error(`Server responded ${res.status}`);
       const data = await res.json();
       const incoming = data.tracks || [];
@@ -223,48 +223,40 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
   const handleScroll = ({ nativeEvent }) => {
     const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
     const distanceFromBottom = contentSize.height - (layoutMeasurement.height + contentOffset.y);
-    if (distanceFromBottom < 300) {
-      loadMoreTrending();
-    }
+    if (distanceFromBottom < 300) loadMoreTrending();
   };
-
-  // Three swipeable category cards replace the old chip-filtered grid -
-  // each card gets its own tracks + gradient (see HomeCategorySwiper.js).
-  const categories = [
-    { key: "trending", label: "Trending now", tracks },
-    { key: "new", label: "New", tracks: [...tracks].reverse() },
-    { key: "topSongs", label: "Top Songs", tracks: [...tracks].sort((a, b) => (b.duration || 0) - (a.duration || 0)) },
-  ];
 
   return (
     <View style={styles.root} {...panResponder.panHandlers}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
         onScroll={handleScroll}
         scrollEventThrottle={150}
       >
-        {/* ---------- Header: avatar + greeting + search ---------- */}
+        {/* ---------- Header: avatar + personalized greeting + settings/inbox/recent ---------- */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <TouchableOpacity style={styles.avatarCircle} onPress={onSettingsPress}>
-              <Ionicons name="settings-outline" size={16} color="#fff" />
+              <Ionicons name="person" size={16} color="#fff" />
             </TouchableOpacity>
-            <Text style={styles.greeting}>Hey there</Text>
+            <View>
+              <Text style={styles.greeting}>
+                {getTimeGreeting()}
+                {displayName ? `, ${displayName}` : ""} 👋
+              </Text>
+              <Text style={styles.greetingSubtitle}>What do you want to listen to?</Text>
+            </View>
           </View>
           <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.iconButton} onPress={onAIChatPress}>
-              <Ionicons name="sparkles" size={16} color="#fff" />
+            <TouchableOpacity style={styles.iconButton} onPress={onSettingsPress}>
+              <Ionicons name="settings-outline" size={16} color="#fff" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.iconButton} onPress={onInboxPress}>
               <Ionicons name="mail-outline" size={16} color="#fff" />
               {unseenShareCount > 0 && (
                 <View style={styles.inboxBadge}>
-                  <Text style={styles.inboxBadgeText}>
-                    {unseenShareCount > 9 ? "9+" : unseenShareCount}
-                  </Text>
+                  <Text style={styles.inboxBadgeText}>{unseenShareCount > 9 ? "9+" : unseenShareCount}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -274,13 +266,18 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
           </View>
         </View>
 
-        {/* ---------- Feature cards: Paste URL (left) + Recent Played (right) ---------- */}
-        <View style={styles.featureCardsRow}>
-          <PasteUrlCard onPress={onPasteLinkPress} />
-          <RecentPlayedCard nowPlaying={nowPlaying} engine={engine} onTrackPress={onTrackPress} />
-        </View>
+        {/* ---------- Action tiles: Paste Link / Downloads / AI Music ---------- */}
+        <ActionTilesRow
+          onPasteLinkPress={onPasteLinkPress}
+          onDownloadsPress={onDownloadsPress}
+          onAIChatPress={onAIChatPress}
+        />
 
-        
+        {/* ---------- Continue Listening: scrubber card for the last played track ---------- */}
+        <ContinueListeningCard nowPlaying={nowPlaying} engine={engine} onTrackPress={onTrackPress} />
+
+        {/* ---------- Made For You: dynamic mixes from listening history ---------- */}
+        <MoodMixesRow onTrackPress={onTrackPress} />
 
         {loading && <ActivityIndicator color="#fff" style={{ marginTop: 20 }} />}
 
@@ -294,33 +291,25 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
         )}
 
         {!loading && !error && (
-          <HomeCategorySwiper categories={categories} onTrackPress={onTrackPress} />
+          <TrendingRow tracks={tracks} onTrackPress={onTrackPress} />
         )}
 
         {loadingMore && <ActivityIndicator color="#fff" style={{ marginTop: 16 }} />}
 
         {/* ---------- Discovery rows: local data + reused endpoints, each
              renders nothing if it has nothing worth showing ---------- */}
-        <PlaylistsRow onTrackPress={onTrackPress} />
-        <SimilarRow onTrackPress={onTrackPress} />
         <RecentlyAddedRow onTrackPress={onTrackPress} />
+        <PlaylistsRow onTrackPress={onTrackPress} />
         <ArtistsRow onTrackPress={onTrackPress} />
+        <SimilarRow onTrackPress={onTrackPress} />
         <PodcastsRow onTrackPress={onTrackPress} />
         <MoviesRow />
 
         {/* ---------- Quick-access strip hinting at the Glass Drawer ---------- */}
         <Text style={styles.sectionTitle}>More</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tileRow}
-        >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tileRow}>
           {DRAWER_TILES.map((tile) => (
-            <TouchableOpacity
-              key={tile.key}
-              style={[styles.quickTile, { borderColor: tile.accent }]}
-              onPress={openDrawer}
-            >
+            <TouchableOpacity key={tile.key} style={[styles.quickTile, { borderColor: tile.accent }]} onPress={openDrawer}>
               <Text style={styles.quickTileText}>{tile.label}</Text>
             </TouchableOpacity>
           ))}
@@ -330,9 +319,7 @@ export default function HomeScreen({ onSearchPress, onDrawerTilePress, onTrackPr
       </ScrollView>
 
       {/* ---------- Backdrop: tap outside the open drawer to close it ---------- */}
-      {drawerOpen && (
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeDrawer} />
-      )}
+      {drawerOpen && <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeDrawer} />}
 
       {/* ---------- Glass Drawer ---------- */}
       <Animated.View
@@ -365,7 +352,6 @@ const styles = StyleSheet.create({
   scrollContent: { paddingTop: 56, paddingHorizontal: 20, paddingBottom: 140 },
 
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 },
-  featureCardsRow: { flexDirection: "row", gap: 12, marginBottom: 18 },
   headerRight: { flexDirection: "row", gap: 8 },
   headerLeft: { flexDirection: "row", alignItems: "center" },
   avatarCircle: {
@@ -379,8 +365,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 12,
   },
-  avatarInitial: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  greeting: { color: "#fff", fontSize: 20, fontWeight: "700" },
+  greeting: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  greetingSubtitle: { color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 },
   iconButton: {
     position: "relative",
     paddingHorizontal: 14,
@@ -392,7 +378,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  iconGlyph: { color: "#fff", fontSize: 13, fontWeight: "600" },
   inboxBadge: {
     position: "absolute",
     top: -4,
@@ -407,35 +392,7 @@ const styles = StyleSheet.create({
   },
   inboxBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
 
-  chipRow: { marginBottom: 20 },
-  chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: GLASS_BG,
-    borderWidth: 1,
-    borderColor: GLASS_BORDER,
-    marginRight: 10,
-  },
-  chipActive: { backgroundColor: "rgba(255,255,255,0.9)" },
-  chipText: { color: "#fff", fontWeight: "600" },
-  chipTextActive: { color: "#FF6B6B" },
-
   sectionTitle: { color: "#fff", fontSize: 17, fontWeight: "700", marginBottom: 12, marginTop: 4 },
-
-  trackGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  trackCard: { width: "31%", marginBottom: 18 },
-  trackArt: {
-    width: 130,
-    height: 130,
-    borderRadius: 14,
-    backgroundColor: GLASS_BG,
-    borderWidth: 1,
-    borderColor: GLASS_BORDER,
-    marginBottom: 8,
-  },
-  trackTitle: { color: "#fff", fontWeight: "600", fontSize: 13 },
-  trackArtist: { color: "rgba(255,255,255,0.75)", fontSize: 12 },
 
   tileRow: { paddingRight: 20, marginBottom: 8 },
   quickTile: {
@@ -462,14 +419,7 @@ const styles = StyleSheet.create({
   },
   retryText: { color: "#fff", fontWeight: "700" },
 
-  backdrop: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.4)",
-  },
+  backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.4)" },
   drawer: {
     position: "absolute",
     top: 0,
@@ -483,11 +433,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   drawerTitle: { color: "#fff", fontSize: 20, fontWeight: "700", marginBottom: 20 },
-  drawerTile: {
-    paddingVertical: 16,
-    borderLeftWidth: 4,
-    paddingLeft: 14,
-    marginBottom: 4,
-  },
+  drawerTile: { paddingVertical: 16, borderLeftWidth: 4, paddingLeft: 14, marginBottom: 4 },
   drawerTileText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 });

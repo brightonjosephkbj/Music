@@ -8,10 +8,13 @@ const CARD_WIDTH = SCREEN_WIDTH - 40;
 const CARD_SPACING = 16;
 const CARD_HEIGHT = 660;
 
+// Restyled to the darker jewel-tone palette used across the redesign -
+// previously pastel backgrounds with dark text; now rich gradients with
+// white text and dark glass rows to match the rest of Home.
 export const CATEGORY_PALETTES = {
-  trending: { colors: ["#DFF7FF", "#7FCDFF"], textColor: "#0b2b3a" },
-  new: { colors: ["#E7D8FF", "#B8C0FF"], textColor: "#241b42" },
-  topSongs: { colors: ["#DFF7FF", "#FFD3B6"], textColor: "#3a2a1b" },
+  trending: { colors: ["#2D1B4E", "#7B2FF7"], textColor: "#fff" },
+  new: { colors: ["#1B2A4E", "#2F6BBF"], textColor: "#fff" },
+  topSongs: { colors: ["#4E1B2A", "#BF2F6B"], textColor: "#fff" },
 };
 
 function CategoryCard({ label, palette, tracks, onTrackPress }) {
@@ -37,7 +40,7 @@ function CategoryCard({ label, palette, tracks, onTrackPress }) {
                 onPress={() => onTrackPress && onTrackPress(track, tracks)}
                 activeOpacity={0.85}
               >
-                <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
+                <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
                 <Image source={track.artwork ? { uri: track.artwork } : undefined} style={styles.rowArt} />
                 <View style={styles.rowTextWrap}>
                   <Text numberOfLines={1} style={[styles.rowTitle, { color: palette.textColor }]}>
@@ -102,16 +105,11 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
     elevation: 10,
   },
-  card: {
-    flex: 1,
-    borderRadius: 26,
-    overflow: "hidden",
-    padding: 16,
-  },
+  card: { flex: 1, borderRadius: 26, overflow: "hidden", padding: 16 },
   cardLabel: { fontSize: 18, fontWeight: "800", marginBottom: 12 },
   trackList: { paddingBottom: 8 },
   emptyText: { fontSize: 13, opacity: 0.7, marginTop: 20, textAlign: "center" },
@@ -124,14 +122,14 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.5)",
+    borderColor: "rgba(255,255,255,0.15)",
   },
-  rowArt: { width: 44, height: 44, borderRadius: 8, marginRight: 10, backgroundColor: "rgba(255,255,255,0.3)" },
+  rowArt: { width: 44, height: 44, borderRadius: 8, marginRight: 10, backgroundColor: "rgba(255,255,255,0.1)" },
   rowTextWrap: { flex: 1 },
   rowTitle: { fontSize: 14, fontWeight: "700" },
-  rowArtist: { fontSize: 12, marginTop: 2, opacity: 0.8 },
+  rowArtist: { fontSize: 12, marginTop: 2, opacity: 0.75 },
 
   dotsRow: { flexDirection: "row", justifyContent: "center", marginTop: 12, gap: 6 },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.4)" },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.3)" },
   dotActive: { backgroundColor: "#fff", width: 18 },
 });
