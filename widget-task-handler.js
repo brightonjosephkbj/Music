@@ -13,9 +13,12 @@ import {
 // headless JS context first, in which case playbackBridge's registered
 // controls won't exist yet and the tap is effectively swallowed - the next
 // tap after the app has had a moment to mount will work correctly.
-function renderFromState(renderWidget) {
-  const { track, isPlaying, position, duration } = getPlaybackState();
+function renderFromState(renderWidget, widgetInfo) {
+  const { track, isPlaying, position, duration, lyricLine } = getPlaybackState();
   const progress = duration > 0 ? position / duration : 0;
+  const width = widgetInfo?.width ?? 250;
+  const height = widgetInfo?.height ?? 80;
+
   renderWidget(
     <NowPlayingWidget
       title={track?.title}
@@ -25,6 +28,9 @@ function renderFromState(renderWidget) {
       position={position}
       duration={duration}
       progress={progress}
+      lyricLine={lyricLine}
+      width={width}
+      height={height}
     />
   );
 }
@@ -34,7 +40,7 @@ export async function widgetTaskHandler(props) {
     case "WIDGET_ADDED":
     case "WIDGET_UPDATE":
     case "WIDGET_RESIZED":
-      renderFromState(props.renderWidget);
+      renderFromState(props.renderWidget, props.widgetInfo);
       break;
 
     case "WIDGET_CLICK": {
@@ -45,7 +51,7 @@ export async function widgetTaskHandler(props) {
       // Re-render immediately with best-known state. If toggle/next/prev
       // triggered an async track load, App.js's own widget-update effect
       // will push the settled state moments later anyway.
-      renderFromState(props.renderWidget);
+      renderFromState(props.renderWidget, props.widgetInfo);
       break;
     }
 

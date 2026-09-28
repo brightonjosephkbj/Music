@@ -2,7 +2,7 @@
   "expo": {
     "name": "B24music",
     "slug": "b24sound",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -80,15 +80,21 @@
             {
               "name": "NowPlaying",
               "label": "B24music Now Playing",
-              "minWidth": "250dp",
-              "minHeight": "80dp",
+              "minWidth": "110dp",
+              "minHeight": "40dp",
               "targetCellWidth": 4,
               "targetCellHeight": 1,
-              "updatePeriodMillis": 1800000
+              "updatePeriodMillis": 1800000,
+              "resizeMode": "horizontal|vertical",
+              "minResizeWidth": "40dp",
+              "minResizeHeight": "40dp",
+              "maxResizeWidth": "600dp",
+              "maxResizeHeight": "400dp"
             }
           ]
         }
-      ]
+      ],
+      "react-native-image-colors"
     ],
     "runtimeVersion": {
       "policy": "appVersion"

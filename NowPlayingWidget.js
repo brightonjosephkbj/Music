@@ -1,76 +1,121 @@
 import React from "react";
-import { FlexWidget, TextWidget, ImageWidget } from "react-native-android-widget";
+import {
+  FlexWidget,
+  TextWidget,
+  ImageWidget,
+  OverlapWidget,
+  SvgWidget,
+} from "react-native-android-widget";
 
-const VANILLA = "#F1FEC8";
-const MUTED = "#C9C6D6";
-const COSMIC_LIGHT = "rgba(255,255,255,0.15)";
+const JET_BLACK = "#0B0A0F";
+const GLASS_TINT = "rgba(11,10,15,0.82)";
+const ORCHID = "#C89BFF";
+const ORCHID_DIM = "rgba(200,155,255,0.30)";
+const TEXT_PRIMARY = "#F5F3FA";
+const TEXT_MUTED = "#B8B3C4";
+const BORDER = "rgba(255,255,255,0.08)";
 
-// Rendered natively by react-native-android-widget - NOT a normal React
-// component tree, just JSX describing RemoteViews. Keep this simple: no
-// hooks, no context, no state - it only ever receives fresh props each time
-// updateWidget() is called from the app (see nowPlayingWidget.js).
-//
-// The frosted-glass look comes from a pre-baked static image
-// (assets/widget-background.png) rather than a real dynamic blur -
-// RemoteViews has no native blur/backdrop-filter primitive, so this is the
-// practical way to get the look. Everything else renders as a normal
-// FlexWidget stack on top of it via position: "absolute" layering.
-//
-// progress is 0-1. isPlaying controls which glyph shows in the center
-// button. clickAction values below are read by widget-task-handler.js's
-// WIDGET_CLICK case to route each button to the right app action.
+// ---- Icons (24x24 viewBox) ----
+const icon = (body) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${body}</svg>`;
+
+const ICONS = {
+  prev: (c) =>
+    icon(`<rect x="5" y="5" width="2.5" height="14" rx="1" fill="${c}"/><path d="M19 5v14L9 12z" fill="${c}"/>`),
+  next: (c) =>
+    icon(`<rect x="16.5" y="5" width="2.5" height="14" rx="1" fill="${c}"/><path d="M5 5v14l10-7z" fill="${c}"/>`),
+  play: (c) => icon(`<path d="M8 5v14l11-7z" fill="${c}"/>`),
+  pause: (c) =>
+    icon(`<rect x="6" y="5" width="4" height="14" rx="1" fill="${c}"/><rect x="14" y="5" width="4" height="14" rx="1" fill="${c}"/>`),
+};
+
 export function NowPlayingWidget({
   title,
   artist,
   artwork,
-  position = 0,
-  duration = 0,
   progress = 0,
   isPlaying = false,
+  lyricLine = null,
+  width = 250,
+  height = 80,
 }) {
   const hasTrack = !!title;
+  const backdrop = artwork || require("./assets/widget-background.png");
+
+  // ---- Responsive flags ----
+  const tiny = height < 70 || width < 140;
+  const compact = height < 110;
+  const showArt = width >= 180;
+  const showSkip = width >= 200;
+  const artSize = Math.max(32, Math.min(height - 28, 140));
+  const pad = tiny ? 8 : 14;
+  const titleSize = tiny ? 13 : height > 160 ? 18 : 15;
+  const subSize = height > 160 ? 14 : 12;
+  const skipSize = tiny ? 22 : 26;
+  const playSize = tiny ? 28 : height > 160 ? 40 : 34;
+  const gap = tiny ? 12 : 20;
+  const pct = Math.round(Math.max(0, Math.min(1, progress)) * 100);
 
   return (
-    <FlexWidget
+    <OverlapWidget
       clickAction="OPEN_APP"
       style={{
         height: "match_parent",
         width: "match_parent",
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: BORDER,
       }}
     >
-      {/* Frosted background image fills the widget */}
       <ImageWidget
-        image={require("./assets/widget-background.png")}
+        image={backdrop}
         imageWidth={512}
         imageHeight={256}
-        style={{
-          width: "match_parent",
-          height: "match_parent",
-          position: "absolute",
-        }}
+        resizeMode="cover"
+        style={{ width: "match_parent", height: "match_parent" }}
       />
 
-      {/* Content layered on top */}
       <FlexWidget
         style={{
           width: "match_parent",
           height: "match_parent",
-          padding: 14,
+          backgroundColor: GLASS_TINT,
+        }}
+      />
+
+      <FlexWidget
+        style={{
+          width: "match_parent",
+          height: "match_parent",
+          padding: pad,
           flexDirection: "row",
           alignItems: "center",
         }}
       >
-        <ImageWidget
-          image={artwork || undefined}
-          imageWidth={70}
-          imageHeight={70}
-          radius={12}
-        />
+        {showArt &&
+          (artwork ? (
+            <ImageWidget
+              image={artwork}
+              imageWidth={artSize}
+              imageHeight={artSize}
+              radius={14}
+              style={{ backgroundColor: JET_BLACK }}
+            />
+          ) : (
+            <FlexWidget
+              style={{
+                width: artSize,
+                height: artSize,
+                borderRadius: 14,
+                backgroundColor: JET_BLACK,
+              }}
+            />
+          ))}
 
         <FlexWidget
           style={{
             flexDirection: "column",
-            marginLeft: 12,
+            marginLeft: showArt ? 12 : 0,
             flexGrow: 1,
             flexShrink: 1,
           }}
@@ -78,70 +123,79 @@ export function NowPlayingWidget({
           <TextWidget
             text={hasTrack ? title : "Not playing"}
             style={{
-              fontSize: 15,
+              fontSize: titleSize,
               fontWeight: "700",
-              color: VANILLA,
-            }}
-            maxLines={1}
-            clickAction="OPEN_APP"
-          />
-          <TextWidget
-            text={hasTrack ? artist || "" : "Open B24music"}
-            style={{
-              fontSize: 12,
-              color: MUTED,
-              marginTop: 2,
+              color: TEXT_PRIMARY,
             }}
             maxLines={1}
             clickAction="OPEN_APP"
           />
 
-          {/* Progress bar */}
-          <FlexWidget
-            style={{
-              height: 3,
-              width: "match_parent",
-              backgroundColor: COSMIC_LIGHT,
-              borderRadius: 2,
-              marginTop: 8,
-            }}
-          >
+          {!tiny && (
+            <TextWidget
+              text={hasTrack ? lyricLine || artist || "" : "Open B24music"}
+              style={{ fontSize: subSize, color: TEXT_MUTED, marginTop: 2 }}
+              maxLines={1}
+              clickAction="OPEN_APP"
+            />
+          )}
+
+          {!compact && (
             <FlexWidget
               style={{
                 height: 3,
-                width: `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`,
-                backgroundColor: VANILLA,
+                width: "match_parent",
+                backgroundColor: ORCHID_DIM,
                 borderRadius: 2,
+                marginTop: 8,
               }}
-            />
-          </FlexWidget>
+            >
+              <FlexWidget
+                style={{
+                  height: 3,
+                  width: `${pct}%`,
+                  backgroundColor: ORCHID,
+                  borderRadius: 2,
+                }}
+              />
+            </FlexWidget>
+          )}
 
-          {/* Controls */}
           <FlexWidget
             style={{
               flexDirection: "row",
               alignItems: "center",
-              marginTop: 8,
+              marginTop: tiny ? 4 : 8,
             }}
           >
-            <TextWidget
-              text="⏮"
-              clickAction="PREV_TRACK"
-              style={{ fontSize: 16, color: "#ffffff", marginRight: 20 }}
-            />
-            <TextWidget
-              text={isPlaying ? "⏸" : "▶"}
+            {showSkip && (
+              <SvgWidget
+                svg={ICONS.prev(TEXT_PRIMARY)}
+                clickAction="PREV_TRACK"
+                style={{ width: skipSize, height: skipSize, marginRight: gap }}
+              />
+            )}
+
+            <SvgWidget
+              svg={isPlaying ? ICONS.pause(ORCHID) : ICONS.play(ORCHID)}
               clickAction="TOGGLE_PLAY"
-              style={{ fontSize: 18, color: VANILLA, fontWeight: "700", marginRight: 20 }}
+              style={{
+                width: playSize,
+                height: playSize,
+                marginRight: showSkip ? gap : 0,
+              }}
             />
-            <TextWidget
-              text="⏭"
-              clickAction="NEXT_TRACK"
-              style={{ fontSize: 16, color: "#ffffff" }}
-            />
+
+            {showSkip && (
+              <SvgWidget
+                svg={ICONS.next(TEXT_PRIMARY)}
+                clickAction="NEXT_TRACK"
+                style={{ width: skipSize, height: skipSize }}
+              />
+            )}
           </FlexWidget>
         </FlexWidget>
       </FlexWidget>
-    </FlexWidget>
+    </OverlapWidget>
   );
 }
