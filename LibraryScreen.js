@@ -12,7 +12,8 @@ const TAB_ICONS = {
 import ArtistHero from "./ArtistHero";
 import { splitArtists } from "./artistImages";
 import { memoGet, memoSet } from "./memoCache";
-import { sortTracks, loadArtistSort, saveArtistSort, loadPlayCounts } from "./artistSort";
+import { sortTracks, loadArtistSort, saveArtistSort, loadPlayCounts, loadAllSongsSort, saveAllSongsSort } from "./artistSort";
+import AllSongsSortSheet, { SORT_LABELS } from "./AllSongsSortSheet";
 import LibraryArtistRow from "./LibraryArtistRow";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
@@ -124,6 +125,8 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   // Playlist tab extras
   const [playlistSearch, setPlaylistSearch] = useState("");
   const [songSearchQuery, setSongSearchQuery] = useState("");
+  const [allSortMode, setAllSortMode] = useState("recent");
+  const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [editPlaylistVisible, setEditPlaylistVisible] = useState(false);
   const [editPlaylistTarget, setEditPlaylistTarget] = useState(null);
   const [editPlaylistName, setEditPlaylistName] = useState("");
@@ -454,12 +457,14 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   const allSongs = useMemo(() => [...appAudio, ...deviceAudio], [appAudio, deviceAudio]);
   const searchSongs = useMemo(() => downloads.filter((d) => d.fromSearch === true), [downloads]);
   const filteredAllSongs = useMemo(() => {
-    if (!songSearchQuery.trim()) return allSongs;
+    const base =
+      allSortMode === "recent" ? allSongs : sortTracks(allSongs, allSortMode, artistPlayCounts);
+    if (!songSearchQuery.trim()) return base;
     const q = songSearchQuery.toLowerCase();
-    return allSongs.filter(
+    return base.filter(
       (s) => (s.title || "").toLowerCase().includes(q) || (s.artist || "").toLowerCase().includes(q)
     );
-  }, [allSongs, songSearchQuery]);
+  }, [allSongs, songSearchQuery, allSortMode, artistPlayCounts]);
 
   const allMedia = useMemo(() => {
     const map = new Map();
@@ -962,7 +967,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
           ]}
           onPress={() => {
             if (item.type === "image") return openImage(item);
-            if (onTrackPress) onTrackPress(item, allSongs);
+            if (onTrackPress) onTrackPress(item, filteredAllSongs);
           }}
           onLongPress={(evt) => openMenu(evt, item)}
           delayLongPress={300}
@@ -1012,7 +1017,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         </TouchableOpacity>
       );
     },
-    [allSongs, onTrackPress, openMenu, openImage, currentTrackId]
+    [filteredAllSongs, onTrackPress, openMenu, openImage, currentTrackId]
   );
 
   const renderPlaylistDetailHeader = () => {
@@ -1233,6 +1238,13 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
       )}
     </>
   );
+
+  useEffect(() => {
+    loadAllSongsSort().then(setAllSortMode);
+  }, []);
+  useEffect(() => {
+    if (allSortMode === "played") loadPlayCounts().then(setArtistPlayCounts);
+  }, [allSortMode]);
 
   const tabListRef = __useRef(null);
   useEffect(() => {
@@ -1612,10 +1624,14 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
                   <View style={styles.asSectionRow}>
                     <Text style={styles.asSectionLabel}>TRACKS ({allSongs.length})</Text>
-                    <View style={styles.asSortRow}>
-                      <Text style={styles.asSortText}>Recently Added</Text>
+                    <TouchableOpacity
+                      style={styles.asSortRow}
+                      onPress={() => setSortSheetOpen(true)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <Text style={styles.asSortText}>{SORT_LABELS[allSortMode]}</Text>
                       <Ionicons name="options-outline" size={14} color={AS_AMBER} />
-                    </View>
+                    </TouchableOpacity>
                   </View>
                 </>
               }
@@ -1808,6 +1824,17 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
           )}
         </>
       )}
+
+      <AllSongsSortSheet
+        visible={sortSheetOpen}
+        current={allSortMode}
+        onClose={() => setSortSheetOpen(false)}
+        onPick={(m) => {
+          setAllSortMode(m);
+          saveAllSongsSort(m);
+          setSortSheetOpen(false);
+        }}
+      />
 
       <ContextMenuCard
         visible={menuVisible}

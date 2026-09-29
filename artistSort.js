@@ -36,7 +36,16 @@ const addedAt = (t) => {
 // modes: "recent" | "title" | "played"
 export function sortTracks(tracks, mode, counts = {}) {
   const items = tracks.map((t, i) => ({ t, i }));
-  if (mode === "title") {
+  if (mode === "artist") {
+    items.sort(
+      (x, y) =>
+        (x.t.artist || "").localeCompare(y.t.artist || "", undefined, { sensitivity: "base" }) ||
+        (x.t.title || "").localeCompare(y.t.title || "", undefined, { sensitivity: "base" }) ||
+        x.i - y.i
+    );
+  } else if (mode === "duration") {
+    items.sort((x, y) => (Number(y.t.duration) || 0) - (Number(x.t.duration) || 0) || x.i - y.i);
+  } else if (mode === "title") {
     items.sort(
       (a, b) =>
         (a.t.title || "").localeCompare(b.t.title || "", undefined, { sensitivity: "base" }) ||
@@ -50,4 +59,16 @@ export function sortTracks(tracks, mode, counts = {}) {
     items.sort((a, b) => addedAt(b.t) - addedAt(a.t) || b.i - a.i);
   }
   return items.map((x) => x.t);
+}
+
+const ALL_KEY = "b24_allsongs_sort_v1";
+export async function loadAllSongsSort() {
+  try {
+    return (await AsyncStorage.getItem(ALL_KEY)) || "recent";
+  } catch {
+    return "recent";
+  }
+}
+export function saveAllSongsSort(mode) {
+  AsyncStorage.setItem(ALL_KEY, mode).catch(() => {});
 }
