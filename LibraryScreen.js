@@ -1,3 +1,4 @@
+import ArtistHero from "./ArtistHero";
 import { splitArtists } from "./artistImages";
 import { memoGet, memoSet } from "./memoCache";
 import { sortTracks, loadArtistSort, saveArtistSort, loadPlayCounts } from "./artistSort";
@@ -1218,6 +1219,28 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     </>
   );
 
+  const artistHeroEl = selectedArtist ? (
+    <ArtistHero
+      artist={selectedArtist}
+      tracks={artistTracks}
+      onBack={() => closeDetail()}
+      onPlay={() => {
+        if (artistTracks.length > 0 && onTrackPress) onTrackPress(artistTracks[0], artistTracks);
+      }}
+      onShuffle={() => {
+        if (artistTracks.length === 0 || !onTrackPress) return;
+        const q = [...artistTracks];
+        for (let i = q.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [q[i], q[j]] = [q[j], q[i]];
+        }
+        onTrackPress(q[0], q);
+      }}
+      onSort={() => openSortMenu()}
+      onSearch={onSearchPress}
+    />
+  ) : null;
+
   const detailMode = !!(selectedFolder || selectedPlaylist || selectedArtist || selectedGroupPlaylist);
   let detailData = [];
   let detailTitle = "";
@@ -1318,7 +1341,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         </>
       )}
 
-      <View style={styles.header}>
+      <View style={[styles.header, selectedArtist && { display: "none" }]}>
         {detailMode ? (
           <TouchableOpacity onPress={closeDetail} style={styles.backButtonRow} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={styles.backGlyph}>‹</Text>
@@ -1426,7 +1449,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
           renderItem={selectedGroupPlaylist ? renderGroupTrackRow : renderTrackRow}
           ListHeaderComponent={
             selectedPlaylist ? renderPlaylistDetailHeader :
-            selectedGroupPlaylist ? renderGroupPlaylistDetailHeader : null
+            selectedGroupPlaylist ? renderGroupPlaylistDetailHeader : selectedArtist ? artistHeroEl : null
           }
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={<Text style={styles.emptyText}>{detailEmptyText}</Text>}
