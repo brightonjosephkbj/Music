@@ -1,3 +1,14 @@
+import { useRef as __useRef } from "react";
+const LIB_ORCHID = "#C89BFF";
+const TAB_ICONS = {
+  Videos: "film",
+  "All Songs": "musical-notes",
+  Search: "search",
+  Folders: "folder",
+  Playlists: "albums",
+  Artists: "person",
+  Downloads: "download",
+};
 import ArtistHero from "./ArtistHero";
 import { splitArtists } from "./artistImages";
 import { memoGet, memoSet } from "./memoCache";
@@ -59,7 +70,7 @@ const PL_GLASS_BORDER = "rgba(255,255,255,0.09)";
 const PL_DARK_GRAY = "#2A2A2E";
 
 const TABS = ["Videos", "All Songs", "Search", "Folders", "Playlists", "Artists", "Downloads"];
-const AS_AMBER = "#F5A623";
+const AS_AMBER = "#C89BFF";
 const AS_GOLD = "#D4AF37";
 const AS_NEON = "#00FF88";
 const AS_GLASS_BG = "rgba(255,255,255,0.05)";
@@ -944,7 +955,11 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
       const isActive = !!currentTrackId && item.id === currentTrackId;
       return (
         <TouchableOpacity
-          style={[styles.asRow, isActive && styles.asRowActive]}
+          style={[
+            styles.asRow,
+            isActive && styles.asRowActive,
+            { borderWidth: 0, borderRadius: 14, backgroundColor: isActive ? "rgba(200,155,255,0.12)" : "transparent" },
+          ]}
           onPress={() => {
             if (item.type === "image") return openImage(item);
             if (onTrackPress) onTrackPress(item, allSongs);
@@ -972,7 +987,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
           <View style={styles.asRowTextWrap}>
             <View style={styles.asRowTitleRow}>
-              <Text numberOfLines={1} style={styles.asRowTitle}>{item.title}</Text>
+              <Text numberOfLines={1} style={[styles.asRowTitle, isActive && { color: LIB_ORCHID }]}>{item.title}</Text>
               {isActive && (
                 <View style={styles.asNowBadge}>
                   <Text style={styles.asNowBadgeText}>NOW</Text>
@@ -1219,6 +1234,16 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     </>
   );
 
+  const tabListRef = __useRef(null);
+  useEffect(() => {
+    const i = TABS.indexOf(activeTab);
+    if (i >= 0 && tabListRef.current) {
+      try {
+        tabListRef.current.scrollToIndex({ index: i, viewPosition: 0.5, animated: true });
+      } catch {}
+    }
+  }, [activeTab]);
+
   const artistHeroEl = selectedArtist ? (
     <ArtistHero
       artist={selectedArtist}
@@ -1348,12 +1373,17 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
             {!selectedPlaylist && !selectedGroupPlaylist && <Text style={styles.title} numberOfLines={1}>{detailTitle}</Text>}
           </TouchableOpacity>
         ) : (
-          <Text style={styles.title}>Your library</Text>
+          <View>
+            <Text style={styles.title}>Your library</Text>
+            <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>
+              {allSongs.length} songs · {videos.length} videos
+            </Text>
+          </View>
         )}
         <View style={styles.headerActions}>
           {!selectedPlaylist && !selectedGroupPlaylist && (
             <TouchableOpacity style={styles.iconButton} onPress={onSearchPress}>
-              <Text style={styles.iconGlyph}>Search</Text>
+              <Ionicons name="search" size={17} color="#fff" />
             </TouchableOpacity>
           )}
           {selectedPlaylist && (
@@ -1425,7 +1455,10 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         <FlatList
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={styles.tabRow}
+          ref={tabListRef}
+          onScrollToIndexFailed={() => {}}
+          contentContainerStyle={{ paddingRight: 20, alignItems: "center" }}
+          style={[styles.tabRow, { height: 52 }]}
           data={TABS}
           keyExtractor={(t) => t}
           renderItem={({ item: tab }) => {
@@ -1433,9 +1466,20 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
             return (
               <TouchableOpacity
                 onPress={() => setActiveTab(tab)}
-                style={[styles.tab, active && styles.tabActive]}
+                style={[
+                  styles.tab,
+                  active && styles.tabActive,
+                  { flexDirection: "row", alignItems: "center", justifyContent: "center", height: 40, paddingVertical: 0 },
+                  active && { backgroundColor: LIB_ORCHID, borderColor: LIB_ORCHID },
+                ]}
               >
-                <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab}</Text>
+                <Ionicons
+                  name={TAB_ICONS[tab] || "ellipse"}
+                  size={15}
+                  color={active ? "#0B0A0F" : "#fff"}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.tabText, active && styles.tabTextActive, { includeFontPadding: false }]}>{tab}</Text>
               </TouchableOpacity>
             );
           }}
@@ -1502,47 +1546,68 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
                       }}
                     />
                   </View>
-                  <View style={styles.asHeroCard}>
-                    <View style={styles.asHeroGlow} pointerEvents="none" />
-                    <View style={styles.asHeroTopRow}>
-                      <View style={styles.asHeroLeftRow}>
-                        <View style={styles.asHeroIconWrap}>
-                          <Ionicons name="sync" size={18} color={AS_AMBER} />
-                        </View>
-                        <View>
-                          <Text style={styles.asHeroTitle}>Sync Storage</Text>
-                          <Text style={styles.asHeroSubtitle}>Deep device audio scan</Text>
-                        </View>
-                      </View>
-                      <View style={styles.asHeroBadge}>
-                        <View style={styles.asHeroBadgeDot} />
-                        <Text style={styles.asHeroBadgeText}>{allSongs.length} Local Files</Text>
-                      </View>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                      backgroundColor: "rgba(255,255,255,0.06)",
+                      borderRadius: 14,
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <Ionicons name="sync" size={18} color={LIB_ORCHID} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: "#F5F3FA", fontWeight: "700", fontSize: 13 }}>
+                        {allSongs.length} local files
+                      </Text>
+                      <Text
+                        style={{ color: scanErrorMsg ? "#FF6B6B" : "rgba(255,255,255,0.5)", fontSize: 11, marginTop: 1 }}
+                        numberOfLines={1}
+                      >
+                        {scanDenied
+                          ? "Storage permission denied - enable it in app settings"
+                          : scanErrorMsg
+                          ? scanErrorMsg
+                          : lastScanCounts
+                          ? `Last scan: ${lastScanCounts.audio} audio, ${lastScanCounts.video} video`
+                          : "Scan your device for new files"}
+                      </Text>
                     </View>
+                    <TouchableOpacity style={styles.asHeroRescanBtn} onPress={runScan} disabled={scanning}>
+                      <Text style={styles.asHeroRescanText}>{scanning ? "Scanning..." : "Rescan"}</Text>
+                    </TouchableOpacity>
+                  </View>
 
-                    <View style={styles.asHeroBottomRow}>
-                      <View style={{ flex: 1, marginRight: 10 }}>
-                        {scanDenied && (
-                          <Text style={styles.asHeroStatsText} numberOfLines={2}>
-                            Storage permission was denied - enable it in your phone's app settings to see local songs here.
-                          </Text>
-                        )}
-                        {!!scanErrorMsg && (
-                          <Text style={[styles.asHeroStatsText, { color: "#FF6B6B" }]} numberOfLines={2}>{scanErrorMsg}</Text>
-                        )}
-                        {!!lastScanCounts && !scanErrorMsg && (
-                          <Text style={styles.asHeroStatsText} numberOfLines={1}>
-                            Last scan: {lastScanCounts.audio} audio, {lastScanCounts.video} video
-                          </Text>
-                        )}
-                        {!scanDenied && !scanErrorMsg && !lastScanCounts && (
-                          <Text style={styles.asHeroStatsText} numberOfLines={1}>Scan your device for local audio files</Text>
-                        )}
-                      </View>
-                      <TouchableOpacity style={styles.asHeroRescanBtn} onPress={runScan} disabled={scanning}>
-                        <Text style={styles.asHeroRescanText}>{scanning ? "Scanning..." : "Rescan"}</Text>
-                      </TouchableOpacity>
-                    </View>
+                  <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        if (filteredAllSongs.length > 0 && onTrackPress) onTrackPress(filteredAllSongs[0], filteredAllSongs);
+                      }}
+                      style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: LIB_ORCHID, borderRadius: 22, paddingVertical: 11 }}
+                    >
+                      <Ionicons name="play" size={16} color="#0B0A0F" />
+                      <Text style={{ color: "#0B0A0F", fontWeight: "800", fontSize: 14 }}>Play</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        if (filteredAllSongs.length === 0 || !onTrackPress) return;
+                        const q = [...filteredAllSongs];
+                        for (let i = q.length - 1; i > 0; i--) {
+                          const j = Math.floor(Math.random() * (i + 1));
+                          [q[i], q[j]] = [q[j], q[i]];
+                        }
+                        onTrackPress(q[0], q);
+                      }}
+                      style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "rgba(255,255,255,0.12)", borderRadius: 22, paddingVertical: 11, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)" }}
+                    >
+                      <Ionicons name="shuffle" size={16} color="#F5F3FA" />
+                      <Text style={{ color: "#F5F3FA", fontWeight: "700", fontSize: 14 }}>Shuffle</Text>
+                    </TouchableOpacity>
                   </View>
 
                   <View style={styles.asSectionRow}>
