@@ -10,6 +10,7 @@ import {
   Dimensions,
   ActivityIndicator,
   RefreshControl,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import ActionTilesRow from "./HomeActionTiles";
@@ -77,6 +78,7 @@ export default function HomeScreen({
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [displayName, setDisplayName] = useState(null);
+  const [avatarUrl, setAvatarUrl] = useState(null);
   const [unseenShareCount, setUnseenShareCount] = useState(0);
 
   // Drawer animation: translateX runs from DRAWER_WIDTH (fully hidden, off
@@ -168,6 +170,7 @@ export default function HomeScreen({
       try {
         const u = await getCurrentUser();
         if (u?.username || u?.name) setDisplayName(u.username || u.name);
+        if (u?.avatar_url) setAvatarUrl(u.avatar_url);
         if (u?.id) {
           const list = await getShareInbox(u.id, { unseenOnly: true, app: "music" });
           setUnseenShareCount(list.length);
@@ -259,7 +262,14 @@ export default function HomeScreen({
               style={[styles.avatarCircle, { marginRight: 0 }]}
               onPress={onSettingsPress}
             >
-              <Ionicons name="person" size={16} color="#fff" />
+              {avatarUrl ? (
+                <Image
+                  source={{ uri: avatarUrl }}
+                  style={{ width: 38, height: 38, borderRadius: 19 }}
+                />
+              ) : (
+                <Ionicons name="person" size={16} color="#fff" />
+              )}
             </TouchableOpacity>
           </View>
         </View>
