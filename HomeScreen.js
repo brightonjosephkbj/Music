@@ -17,6 +17,7 @@ import ContinueListeningCard from "./HomeContinueListening";
 import MoodMixesRow from "./HomeMoodMixes";
 import { PlaylistsRow, SimilarRow, RecentlyAddedRow, ArtistsRow, PodcastsRow } from "./HomeDiscoveryRows";
 import TrendingRow from "./HomeTrendingRow";
+import HeroCard, { buildHeroSlides } from "./HomeHeroCard";
 import AnalogClock from "./AnalogClock";
 import MoviesRow from "./MoviesRow";
 
@@ -237,21 +238,12 @@ export default function HomeScreen({
         {/* ---------- Header: avatar + personalized greeting + settings/inbox/recent ---------- */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <TouchableOpacity style={styles.avatarCircle} onPress={onSettingsPress}>
-              <Ionicons name="person" size={16} color="#fff" />
-            </TouchableOpacity>
-            <View>
-              <Text style={styles.greeting}>
-                {getTimeGreeting()}
-                {displayName ? `, ${displayName}` : ""} 👋
-              </Text>
-              <Text style={styles.greetingSubtitle}>What do you want to listen to?</Text>
-            </View>
+            <Ionicons name="musical-notes" size={26} color="#C89BFF" />
+            <Text style={{ color: "#fff", fontSize: 20, fontWeight: "800", marginLeft: 8 }}>
+              B24 Music
+            </Text>
           </View>
           <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.iconButton} onPress={onSettingsPress}>
-              <Ionicons name="settings-outline" size={16} color="#fff" />
-            </TouchableOpacity>
             <TouchableOpacity style={styles.iconButton} onPress={onInboxPress}>
               <Ionicons name="mail-outline" size={16} color="#fff" />
               {unseenShareCount > 0 && (
@@ -263,8 +255,19 @@ export default function HomeScreen({
             <TouchableOpacity style={styles.iconButton} onPress={onRecentPress}>
               <AnalogClock size={18} color="#fff" />
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.avatarCircle, { marginRight: 0 }]}
+              onPress={onSettingsPress}
+            >
+              <Ionicons name="person" size={16} color="#fff" />
+            </TouchableOpacity>
           </View>
         </View>
+
+        {/* ---------- Hero card: swipeable featured slides ---------- */}
+        {!loading && !error && (
+          <HeroCard slides={buildHeroSlides(tracks, onTrackPress)} />
+        )}
 
         {/* ---------- Action tiles: Paste Link / Downloads / AI Music ---------- */}
         <ActionTilesRow
