@@ -22,6 +22,7 @@ import useHeroMix from "./useHeroMix";
 import AnalogClock from "./AnalogClock";
 import MoviesRow from "./MoviesRow";
 import HomeBackground from "./HomeBackground";
+import PlaylistGrid from "./HomePlaylistGrid";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -292,6 +293,8 @@ export default function HomeScreen({
         {/* ---------- Continue Listening: scrubber card for the last played track ---------- */}
         <ContinueListeningCard nowPlaying={nowPlaying} engine={engine} onTrackPress={onTrackPress} />
 
+        <PlaylistGrid onTrackPress={onTrackPress} />
+
         {/* ---------- Made For You: dynamic mixes from listening history ---------- */}
 
         {loading && <ActivityIndicator color="#fff" style={{ marginTop: 20 }} />}
@@ -314,7 +317,6 @@ export default function HomeScreen({
         {/* ---------- Discovery rows: local data + reused endpoints, each
              renders nothing if it has nothing worth showing ---------- */}
         <RecentlyAddedRow onTrackPress={onTrackPress} />
-        <PlaylistsRow onTrackPress={onTrackPress} />
         <ArtistsRow onTrackPress={onTrackPress} />
         <SimilarRow onTrackPress={onTrackPress} />
         <PodcastsRow onTrackPress={onTrackPress} />
