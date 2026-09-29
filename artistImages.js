@@ -47,6 +47,12 @@ async function fetchPhoto(name) {
   }
 }
 
+export function peekArtistPhoto(rawName) {
+  const name = primaryArtist(rawName);
+  const v = cache && cache[name];
+  return v && v !== MISS ? v : null;
+}
+
 export async function getArtistPhoto(rawName) {
   const name = primaryArtist(rawName);
   if (!name) return null;
@@ -92,3 +98,5 @@ export function splitArtists(raw) {
     .filter(Boolean);
   return [...new Set(parts)];
 }
+
+loadCache(); // warm the photo cache at startup

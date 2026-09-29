@@ -2,13 +2,14 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { getDownloads } from "./libraryStorage";
-import { getArtistPhoto, splitArtists } from "./artistImages";
+import { getArtistPhoto, peekArtistPhoto, splitArtists } from "./artistImages";
+import { memoGet, memoSet } from "./memoCache";
 
 const SIZE = 96;
 const MAX_ARTISTS = 12;
 
 function ArtistCard({ artist, tracks, fallbackArt, onPress }) {
-  const [photo, setPhoto] = useState(null);
+  const [photo, setPhoto] = useState(peekArtistPhoto(artist));
 
   useEffect(() => {
     let alive = true;
@@ -40,7 +41,7 @@ function ArtistCard({ artist, tracks, fallbackArt, onPress }) {
 }
 
 export default function ArtistsRow({ onTrackPress }) {
-  const [artists, setArtists] = useState([]);
+  const [artists, setArtists] = useState(memoGet("artists") || []);
 
   useEffect(() => {
     getDownloads().then((downloads) => {
@@ -60,7 +61,7 @@ export default function ArtistsRow({ onTrackPress }) {
           ...g,
           fallbackArt: (g.tracks.find((t) => t.artwork) || {}).artwork || null,
         }));
-      setArtists(list);
+      setArtists(memoSet("artists", list));
     });
   }, []);
 

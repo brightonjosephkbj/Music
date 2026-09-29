@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions } from "rea
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getPlaylists, getDownloads } from "./libraryStorage";
+import { memoGet, memoSet } from "./memoCache";
 
 const GAP = 10;
 const TILE_W = (Dimensions.get("window").width - 40 - GAP) / 2;
@@ -46,13 +47,15 @@ function rank(playlists, plays) {
 }
 
 export default function PlaylistGrid({ onTrackPress }) {
-  const [playlists, setPlaylists] = useState([]);
-  const [downloads, setDownloads] = useState([]);
-  const [plays, setPlays] = useState({});
+  const [playlists, setPlaylists] = useState((memoGet("pg") || {}).playlists || []);
+  const [downloads, setDownloads] = useState((memoGet("pg") || {}).downloads || []);
+  const [plays, setPlays] = useState((memoGet("pg") || {}).plays || {});
 
   const load = useCallback(async () => {
     const [p, d, pl] = await Promise.all([getPlaylists(), getDownloads(), loadPlays()]);
-    setPlaylists((p || []).filter((x) => x.trackIds && x.trackIds.length > 0));
+    const pls = (p || []).filter((x) => x.trackIds && x.trackIds.length > 0);
+    memoSet("pg", { playlists: pls, downloads: d || [], plays: pl });
+    setPlaylists(pls);
     setDownloads(d || []);
     setPlays(pl);
   }, []);

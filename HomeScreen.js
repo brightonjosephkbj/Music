@@ -60,6 +60,9 @@ function getTimeGreeting() {
 // plain callbacks so this screen doesn't assume any particular navigation
 // library - wire them up from the parent. onDownloadsPress is new - point
 // it at whichever screen shows offline/downloaded tracks.
+const TRENDING_TTL_MS = 5 * 60 * 1000;
+let trendingCache = { tracks: [], at: 0 };
+
 export default function HomeScreen({
   onSearchPress,
   onDrawerTilePress,
@@ -73,11 +76,11 @@ export default function HomeScreen({
   nowPlaying,
   engine,
 }) {
-  const [tracks, setTracks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [tracks, setTracks] = useState(trendingCache.tracks);
+  const [loading, setLoading] = useState(trendingCache.tracks.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const [offset, setOffset] = useState(0);
+  const [offset, setOffset] = useState(trendingCache.tracks.length);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [displayName, setDisplayName] = useState(null);
@@ -153,10 +156,11 @@ export default function HomeScreen({
       const data = await res.json();
       const newTracks = data.tracks || [];
       setTracks(newTracks);
+      trendingCache = { tracks: newTracks, at: Date.now() };
       setOffset(newTracks.length);
       setHasMore(newTracks.length >= 15);
     } catch (err) {
-      setError(err.message || "Couldn't load trending tracks");
+      if (trendingCache.tracks.length === 0) setError(err.message || "Couldn't load trending tracks");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -164,7 +168,10 @@ export default function HomeScreen({
   };
 
   useEffect(() => {
-    fetchTrending();
+    // Cached trending shows instantly; only refetch (silently) when stale.
+    if (trendingCache.tracks.length === 0 || Date.now() - trendingCache.at > TRENDING_TTL_MS) {
+      fetchTrending();
+    }
   }, []);
 
   // Display name + inbox badge share one getCurrentUser() call - best
@@ -215,7 +222,9 @@ export default function HomeScreen({
           return prev;
         }
         setOffset(prev.length + fresh.length);
-        return [...prev, ...fresh];
+        const merged = [...prev, ...fresh];
+        trendingCache = { tracks: merged, at: trendingCache.at };
+        return merged;
       });
 
       if (incoming.length < 15) setHasMore(false);
