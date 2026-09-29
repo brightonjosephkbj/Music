@@ -3,16 +3,8 @@ import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { getListeningHistory } from "./listeningHistory";
 
-// ---------------------------------------------------------------------------
-// Continue Listening: a compact scrubber card for the last-played track,
-// matching the mockup's inline-progress layout. This is a different shape
-// than the old RecentPlayedCard (full-bleed art + lyric overlay) - that
-// component still exists in HomeFeatureCards.js untouched, in case it's
-// used elsewhere (e.g. RecentScreen); Home just no longer references it.
-// ---------------------------------------------------------------------------
-const GLASS_BG = "rgba(255,255,255,0.06)";
-const GLASS_BORDER = "rgba(255,255,255,0.12)";
-const AMBER = "#FFC24B";
+const ORCHID = "#C89BFF";
+const INK = "#0B0A0F";
 
 function formatTime(seconds) {
   if (!seconds || Number.isNaN(seconds)) return "0:00";
@@ -28,22 +20,17 @@ export default function ContinueListeningCard({ nowPlaying, engine, onTrackPress
     getListeningHistory().then((h) => setEntry(h[0] || null));
   }, []);
 
+  if (!entry) return null;
+
   const isActive =
-    !!entry &&
     !!nowPlaying &&
     String(nowPlaying.id) === String(entry.id) &&
     (nowPlaying.provider || null) === (entry.provider || null);
 
-  // Nothing played yet - Home already has plenty to show without an empty
-  // placeholder card here.
-  if (!entry) return null;
-
   const position = isActive ? engine?.position || 0 : 0;
-  // Falls back to a duration stored on the history entry itself, if your
-  // listeningHistory records one - otherwise the bar just sits at 0 until
-  // playback is active and the engine reports a real duration.
   const duration = isActive ? engine?.duration || 0 : entry.duration || 0;
   const progress = duration > 0 ? Math.min(position / duration, 1) : 0;
+  const playing = isActive && !!engine?.isPlaying;
 
   const handlePlay = () => {
     if (isActive) {
@@ -54,64 +41,87 @@ export default function ContinueListeningCard({ nowPlaying, engine, onTrackPress
   };
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.title}>Continue Listening</Text>
-      <TouchableOpacity style={styles.card} onPress={handlePlay} activeOpacity={0.9}>
-        <Image source={entry.artwork ? { uri: entry.artwork } : undefined} style={styles.art} />
-        <View style={styles.info}>
-          <Text numberOfLines={1} style={styles.trackTitle}>{entry.title}</Text>
-          <Text numberOfLines={1} style={styles.trackArtist}>{entry.artist}</Text>
-          <View style={styles.scrubTrack}>
-            <View style={[styles.scrubFill, { width: `${progress * 100}%` }]} />
-          </View>
-          <View style={styles.timeRow}>
-            <Text style={styles.timeText}>{formatTime(position)}</Text>
-            <Text style={styles.timeText}>{formatTime(duration)}</Text>
-          </View>
-        </View>
-        <TouchableOpacity
-          style={styles.playButton}
-          onPress={handlePlay}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name={isActive && engine?.isPlaying ? "pause" : "play"} size={18} color="#020202" />
-        </TouchableOpacity>
+    <TouchableOpacity style={styles.card} onPress={handlePlay} activeOpacity={0.92}>
+      {!!entry.artwork && (
+        <Image
+          source={{ uri: entry.artwork }}
+          style={StyleSheet.absoluteFill}
+          blurRadius={28}
+          resizeMode="cover"
+        />
+      )}
+      <View style={styles.scrim} />
+
+      <Image
+        source={entry.artwork ? { uri: entry.artwork } : undefined}
+        style={styles.art}
+      />
+
+      <View style={styles.info}>
+        <Text style={styles.label}>CONTINUE LISTENING</Text>
+        <Text numberOfLines={1} style={styles.title}>{entry.title}</Text>
+        <Text numberOfLines={1} style={styles.artist}>{entry.artist}</Text>
+
+        {duration > 0 ? (
+          <>
+            <View style={styles.track}>
+              <View style={[styles.fill, { width: `${progress * 100}%` }]} />
+            </View>
+            <View style={styles.timeRow}>
+              <Text style={styles.time}>{formatTime(position)}</Text>
+              <Text style={styles.time}>{formatTime(duration)}</Text>
+            </View>
+          </>
+        ) : (
+          <Text style={styles.resume}>Tap to resume</Text>
+        )}
+      </View>
+
+      <TouchableOpacity
+        style={styles.playBtn}
+        onPress={handlePlay}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      >
+        <Ionicons name={playing ? "pause" : "play"} size={20} color={INK} />
       </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  section: { marginBottom: 20 },
-  title: { color: "#fff", fontSize: 15, fontWeight: "700", marginBottom: 10 },
   card: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: GLASS_BG,
+    borderRadius: 26,
+    overflow: "hidden",
+    padding: 14,
+    marginBottom: 20,
+    backgroundColor: "#15121C",
     borderWidth: 1,
-    borderColor: GLASS_BORDER,
-    borderRadius: 18,
-    padding: 12,
+    borderColor: "rgba(255,255,255,0.08)",
   },
-  art: { width: 56, height: 56, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)" },
-  info: { flex: 1, marginLeft: 12, marginRight: 10 },
-  trackTitle: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  trackArtist: { color: "rgba(255,255,255,0.6)", fontSize: 12, marginTop: 1 },
-  scrubTrack: {
-    height: 3,
+  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(11,10,15,0.72)" },
+  art: { width: 96, height: 96, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.08)" },
+  info: { flex: 1, marginLeft: 14, marginRight: 10 },
+  label: { color: ORCHID, fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
+  title: { color: "#F5F3FA", fontSize: 16, fontWeight: "800", marginTop: 3 },
+  artist: { color: "rgba(245,243,250,0.65)", fontSize: 12, marginTop: 2 },
+  track: {
+    height: 4,
     borderRadius: 2,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    marginTop: 8,
+    backgroundColor: "rgba(200,155,255,0.3)",
+    marginTop: 10,
     overflow: "hidden",
   },
-  scrubFill: { height: "100%", backgroundColor: AMBER, borderRadius: 2 },
+  fill: { height: "100%", backgroundColor: ORCHID, borderRadius: 2 },
   timeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
-  timeText: { color: "rgba(255,255,255,0.45)", fontSize: 10 },
-  playButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: AMBER,
+  time: { color: "rgba(245,243,250,0.5)", fontSize: 10 },
+  resume: { color: "rgba(245,243,250,0.5)", fontSize: 11, marginTop: 10 },
+  playBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: ORCHID,
     alignItems: "center",
     justifyContent: "center",
   },
