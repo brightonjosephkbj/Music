@@ -18,6 +18,8 @@ import * as Updates from "expo-updates";
 import * as ImagePicker from "expo-image-picker";
 import appJson from "./app.json";
 import { uploadAvatar, updateUsername, updateBio } from "./apiClient";
+import WidgetCustomizeScreen from "./WidgetCustomizeScreen";
+import HomeBackgroundScreen from "./HomeBackgroundScreen";
 
 /* settings_redesign_patch_v2 - sectioned list layout, dark theme kept */
 const ACCENT = "#E8A662"; // amber - matches Inbox/ShareThread accent
@@ -66,6 +68,8 @@ function SectionTitle({ children }) {
 
 export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpdate, onBackPress } = {}) {
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [showWidgetCustomize, setShowWidgetCustomize] = useState(false);
+  const [showBgPicker, setShowBgPicker] = useState(false);
   const [avatarError, setAvatarError] = useState(null);
 
   const [editingUsername, setEditingUsername] = useState(false);
@@ -197,6 +201,16 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
 
   return (
     <View style={styles.root}>
+      {showBgPicker && (
+        <View style={[StyleSheet.absoluteFill, { zIndex: 10, elevation: 10, backgroundColor: "#0B0A0F" }]}>
+          <HomeBackgroundScreen onBack={() => setShowBgPicker(false)} />
+        </View>
+      )}
+      {showWidgetCustomize && (
+        <View style={[StyleSheet.absoluteFill, { zIndex: 10, elevation: 10, backgroundColor: "#0B0A0F" }]}>
+          <WidgetCustomizeScreen onBack={() => setShowWidgetCustomize(false)} />
+        </View>
+      )}
       <LinearGradient colors={[BG_TOP, BG_BOTTOM]} style={StyleSheet.absoluteFill} />
 
       <View style={styles.header}>
@@ -439,6 +453,28 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
              wired to anything real yet. Disabled + "Coming soon" instead of
              a toggle that silently does nothing. No Dark Mode row - this
              app doesn't have a light theme to switch to. ---------- */}
+        <SectionTitle>Home</SectionTitle>
+        <View style={styles.card}>
+          <SettingsRow
+            icon="image-outline"
+            title="Home background"
+            subtitle="Set a picture or video behind Home"
+            onPress={() => setShowBgPicker(true)}
+            right={<Ionicons name="chevron-forward" size={18} color={MUTED} />}
+          />
+        </View>
+
+        <SectionTitle>Widget</SectionTitle>
+        <View style={styles.card}>
+          <SettingsRow
+            icon="color-palette-outline"
+            title="Customize widget"
+            subtitle="Colors, background, layout"
+            onPress={() => setShowWidgetCustomize(true)}
+            right={<Ionicons name="chevron-forward" size={18} color={MUTED} />}
+          />
+        </View>
+
         <SectionTitle>Preferences</SectionTitle>
         <View style={styles.card}>
           <SettingsRow

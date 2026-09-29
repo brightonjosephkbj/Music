@@ -15,12 +15,13 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import ActionTilesRow from "./HomeActionTiles";
 import ContinueListeningCard from "./HomeContinueListening";
-import MoodMixesRow from "./HomeMoodMixes";
 import { PlaylistsRow, SimilarRow, RecentlyAddedRow, ArtistsRow, PodcastsRow } from "./HomeDiscoveryRows";
 import TrendingRow from "./HomeTrendingRow";
 import HeroCard, { buildHeroSlides } from "./HomeHeroCard";
+import useHeroMix from "./useHeroMix";
 import AnalogClock from "./AnalogClock";
 import MoviesRow from "./MoviesRow";
+import HomeBackground from "./HomeBackground";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -78,6 +79,7 @@ export default function HomeScreen({
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [displayName, setDisplayName] = useState(null);
+  const mixSlide = useHeroMix(onTrackPress);
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [unseenShareCount, setUnseenShareCount] = useState(0);
 
@@ -232,6 +234,7 @@ export default function HomeScreen({
 
   return (
     <View style={styles.root} {...panResponder.panHandlers}>
+      <HomeBackground />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
@@ -276,7 +279,7 @@ export default function HomeScreen({
 
         {/* ---------- Hero card: swipeable featured slides ---------- */}
         {!loading && !error && (
-          <HeroCard slides={buildHeroSlides(tracks, onTrackPress)} />
+          <HeroCard slides={[...buildHeroSlides(tracks, onTrackPress), ...(mixSlide ? [mixSlide] : [])]} />
         )}
 
         {/* ---------- Action tiles: Paste Link / Downloads / AI Music ---------- */}
@@ -290,7 +293,6 @@ export default function HomeScreen({
         <ContinueListeningCard nowPlaying={nowPlaying} engine={engine} onTrackPress={onTrackPress} />
 
         {/* ---------- Made For You: dynamic mixes from listening history ---------- */}
-        <MoodMixesRow onTrackPress={onTrackPress} />
 
         {loading && <ActivityIndicator color="#fff" style={{ marginTop: 20 }} />}
 
