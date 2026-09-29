@@ -15,7 +15,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import ActionTilesRow from "./HomeActionTiles";
 import ContinueListeningCard from "./HomeContinueListening";
-import { PlaylistsRow, SimilarRow, RecentlyAddedRow, ArtistsRow, PodcastsRow } from "./HomeDiscoveryRows";
+import { PlaylistsRow, SimilarRow, RecentlyAddedRow, PodcastsRow } from "./HomeDiscoveryRows";
 import TrendingRow from "./HomeTrendingRow";
 import HeroCard, { buildHeroSlides } from "./HomeHeroCard";
 import useHeroMix from "./useHeroMix";
@@ -23,6 +23,7 @@ import AnalogClock from "./AnalogClock";
 import MoviesRow from "./MoviesRow";
 import HomeBackground from "./HomeBackground";
 import PlaylistGrid from "./HomePlaylistGrid";
+import ArtistsRow from "./HomeArtistsRow";
 
 // ---------------------------------------------------------------------------
 // CONFIG
