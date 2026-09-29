@@ -1,3 +1,7 @@
+import { splitArtists } from "./artistImages";
+import { memoGet, memoSet } from "./memoCache";
+import { sortTracks, loadArtistSort, saveArtistSort, loadPlayCounts } from "./artistSort";
+import LibraryArtistRow from "./LibraryArtistRow";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
@@ -160,6 +164,8 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   const [selectedFolder, setSelectedFolder] = useState(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
   const [selectedArtist, setSelectedArtist] = useState(null);
+  const [artistSortMode, setArtistSortMode] = useState("recent");
+  const [artistPlayCounts, setArtistPlayCounts] = useState({});
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -452,14 +458,27 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   }, [downloads, deviceAudio, deviceVideo]);
 
   const artistGroups = useMemo(() => {
-    return [...allSongs, ...videos].reduce((acc, d) => {
-      const key = d.artist || "Unknown Artist";
-      acc[key] = acc[key] || [];
-      acc[key].push(d);
-      return acc;
-    }, {});
+    const names = new Map();
+    const groups = {};
+    [...allSongs, ...videos].forEach((d) => {
+      const list = splitArtists(d.artist);
+      (list.length ? list : ["Unknown Artist"]).forEach((n) => {
+        const k = n.toLowerCase();
+        if (!names.has(k)) names.set(k, n);
+        const name = names.get(k);
+        (groups[name] = groups[name] || []).push(d);
+      });
+    });
+    if (Object.keys(groups).length > 0) {
+      memoSet("libArtistGroups", groups);
+      return groups;
+    }
+    return memoGet("libArtistGroups") || groups;
   }, [allSongs, videos]);
-  const artistEntries = useMemo(() => Object.entries(artistGroups), [artistGroups]);
+  const artistEntries = useMemo(
+    () => Object.entries(artistGroups).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])),
+    [artistGroups]
+  );
 
   const getPlaylistArt = useCallback((playlist) => {
     if (playlist.art) return { uri: playlist.art };
@@ -662,13 +681,22 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   }, [selectedGroupPlaylist, groupCurrentUserId, groupInfoName, groupInfoArtUri, loadAll]);
 
   const openSortMenu = useCallback(() => {
+    if (selectedArtist) {
+      const pick = (mode) => { setArtistSortMode(mode); saveArtistSort(mode); };
+      Alert.alert("Sort songs", "", [
+        { text: "Recently Added", onPress: () => pick("recent") },
+        { text: "Title A-Z", onPress: () => pick("title") },
+        { text: "Most Played", onPress: () => pick("played") },
+      ]);
+      return;
+    }
     Alert.alert("Sort by", "", [
       { text: "Recently Added", onPress: () => setPlaylistSortMode("recent") },
       { text: "Album", onPress: () => setPlaylistSortMode("album") },
       { text: "Artist", onPress: () => setPlaylistSortMode("artist") },
       { text: "Cancel", style: "cancel" },
     ]);
-  }, []);
+  }, [selectedArtist]);
 
   const confirmRemoveSelected = useCallback(() => {
     if (!selectedPlaylist || editSelectedIds.size === 0) return;
@@ -734,8 +762,15 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
   const artistTracks = useMemo(() => {
     if (!selectedArtist) return [];
-    return artistGroups[selectedArtist] || [];
-  }, [selectedArtist, artistGroups]);
+    return sortTracks(artistGroups[selectedArtist] || [], artistSortMode, artistPlayCounts);
+  }, [selectedArtist, artistGroups, artistSortMode, artistPlayCounts]);
+
+  useEffect(() => {
+    loadArtistSort().then(setArtistSortMode);
+  }, []);
+  useEffect(() => {
+    if (selectedArtist) loadPlayCounts().then(setArtistPlayCounts);
+  }, [selectedArtist]);
 
   useEffect(() => {
     if (selectedFolder) {
@@ -1675,10 +1710,11 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
               windowSize={7}
               removeClippedSubviews
               renderItem={({ item: [artist, tracks] }) => (
-                <TouchableOpacity style={styles.folderRow} onPress={() => setSelectedArtist(artist)}>
-                  <Text style={styles.folderName}>{artist}</Text>
-                  <Text style={styles.folderCount}>{tracks.length} tracks</Text>
-                </TouchableOpacity>
+                <LibraryArtistRow
+                  artist={artist}
+                  tracks={tracks}
+                  onPress={() => setSelectedArtist(artist)}
+                />
               )}
             />
           )}
