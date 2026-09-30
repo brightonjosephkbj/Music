@@ -29,20 +29,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Generate Android icon assets from icon.png
-        run: |
-          pip install --quiet --break-system-packages pillow
-          python3 << 'ICONEOF'
-          from PIL import Image
-          base = Image.open("assets/icon.png").convert("RGBA")
-          base.resize((1024, 1024)).save("assets/android-icon-foreground.png")
-          bg = Image.new("RGBA", (1024, 1024), (15, 18, 32, 255))
-          bg.save("assets/android-icon-background.png")
-          base.resize((1024, 1024)).convert("L").convert("RGBA").save("assets/android-icon-monochrome.png")
-          base.resize((48, 48)).save("assets/favicon.png")
-          base.resize((512, 512)).save("assets/splash-icon.png")
-          ICONEOF
-
       - name: Expo prebuild (generate native Android project)
         run: npx expo prebuild --platform android --clean
 
@@ -93,10 +79,10 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --stacktrace --info
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --stacktrace --info
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: b24music-release-apk
+          name: obsidian-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
