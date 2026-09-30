@@ -6,16 +6,21 @@ import {
   OverlapWidget,
   SvgWidget,
 } from "react-native-android-widget";
+import { DEFAULT_SETTINGS } from "./widgetSettings";
+import { getLayout, pickLayoutKey } from "./widgetLayouts";
+import { renderCustomItems } from "./CustomWidgetLayout";
 
 const JET_BLACK = "#0B0A0F";
-const GLASS_TINT = "rgba(11,10,15,0.82)";
-const ORCHID = "#C89BFF";
-const ORCHID_DIM = "rgba(200,155,255,0.30)";
 const TEXT_PRIMARY = "#F5F3FA";
 const TEXT_MUTED = "#B8B3C4";
 const BORDER = "rgba(255,255,255,0.08)";
 
-// ---- Icons (24x24 viewBox) ----
+const hexToRgba = (hex, a) => {
+  const h = hex.replace("#", "");
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+
 const icon = (body) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${body}</svg>`;
 
@@ -38,23 +43,58 @@ export function NowPlayingWidget({
   lyricLine = null,
   width = 250,
   height = 80,
+  settings,
 }) {
+  const S = { ...DEFAULT_SETTINGS, ...(settings || {}) };
   const hasTrack = !!title;
+  const solid = S.bgStyle === "solid";
   const backdrop = artwork || require("./assets/widget-background.png");
+  const scrim = hexToRgba(S.bgColor, solid ? 1 : S.dim);
 
-  // ---- Responsive flags ----
   const tiny = height < 70 || width < 140;
   const compact = height < 110;
-  const showArt = width >= 180;
-  const showSkip = width >= 200;
+  const showArt = S.showArt && width >= 180;
+  const showSkip = S.showSkip && width >= 200;
+  const showProgress = S.showProgress && !compact;
+  const showSub = S.showLyric && !tiny;
+
   const artSize = Math.max(32, Math.min(height - 28, 140));
   const pad = tiny ? 8 : 14;
-  const titleSize = tiny ? 13 : height > 160 ? 18 : 15;
-  const subSize = height > 160 ? 14 : 12;
+  const sc = S.textScale;
+  const titleSize = Math.round((tiny ? 13 : height > 160 ? 18 : 15) * sc);
+  const subSize = Math.round((height > 160 ? 14 : 12) * sc);
   const skipSize = tiny ? 22 : 26;
   const playSize = tiny ? 28 : height > 160 ? 40 : 34;
   const gap = tiny ? 12 : 20;
   const pct = Math.round(Math.max(0, Math.min(1, progress)) * 100);
+
+  if (S.customLayout) {
+    const items = getLayout(S, pickLayoutKey(width, height));
+    return (
+      <OverlapWidget
+        clickAction="OPEN_APP"
+        style={{
+          height: "match_parent",
+          width: "match_parent",
+          borderRadius: S.radius,
+          borderWidth: 1,
+          borderColor: BORDER,
+        }}
+      >
+        {!solid && (
+          <ImageWidget
+            image={backdrop}
+            imageWidth={512}
+            imageHeight={256}
+            resizeMode="cover"
+            style={{ width: "match_parent", height: "match_parent" }}
+          />
+        )}
+        <FlexWidget style={{ width: "match_parent", height: "match_parent", backgroundColor: scrim }} />
+        {renderCustomItems({ items, width, height, S, title, artist, artwork, lyricLine, progress, isPlaying })}
+      </OverlapWidget>
+    );
+  }
 
   return (
     <OverlapWidget
@@ -62,24 +102,26 @@ export function NowPlayingWidget({
       style={{
         height: "match_parent",
         width: "match_parent",
-        borderRadius: 20,
+        borderRadius: S.radius,
         borderWidth: 1,
         borderColor: BORDER,
       }}
     >
-      <ImageWidget
-        image={backdrop}
-        imageWidth={512}
-        imageHeight={256}
-        resizeMode="cover"
-        style={{ width: "match_parent", height: "match_parent" }}
-      />
+      {!solid && (
+        <ImageWidget
+          image={backdrop}
+          imageWidth={512}
+          imageHeight={256}
+          resizeMode="cover"
+          style={{ width: "match_parent", height: "match_parent" }}
+        />
+      )}
 
       <FlexWidget
         style={{
           width: "match_parent",
           height: "match_parent",
-          backgroundColor: GLASS_TINT,
+          backgroundColor: scrim,
         }}
       />
 
@@ -122,16 +164,12 @@ export function NowPlayingWidget({
         >
           <TextWidget
             text={hasTrack ? title : "Not playing"}
-            style={{
-              fontSize: titleSize,
-              fontWeight: "700",
-              color: TEXT_PRIMARY,
-            }}
+            style={{ fontSize: titleSize, fontWeight: "700", color: TEXT_PRIMARY }}
             maxLines={1}
             clickAction="OPEN_APP"
           />
 
-          {!tiny && (
+          {showSub && (
             <TextWidget
               text={hasTrack ? lyricLine || artist || "" : "Open B24music"}
               style={{ fontSize: subSize, color: TEXT_MUTED, marginTop: 2 }}
@@ -140,12 +178,12 @@ export function NowPlayingWidget({
             />
           )}
 
-          {!compact && (
+          {showProgress && (
             <FlexWidget
               style={{
                 height: 3,
                 width: "match_parent",
-                backgroundColor: ORCHID_DIM,
+                backgroundColor: hexToRgba(S.accent, 0.3),
                 borderRadius: 2,
                 marginTop: 8,
               }}
@@ -154,7 +192,7 @@ export function NowPlayingWidget({
                 style={{
                   height: 3,
                   width: `${pct}%`,
-                  backgroundColor: ORCHID,
+                  backgroundColor: S.accent,
                   borderRadius: 2,
                 }}
               />
@@ -177,7 +215,7 @@ export function NowPlayingWidget({
             )}
 
             <SvgWidget
-              svg={isPlaying ? ICONS.pause(ORCHID) : ICONS.play(ORCHID)}
+              svg={isPlaying ? ICONS.pause(S.accent) : ICONS.play(S.accent)}
               clickAction="TOGGLE_PLAY"
               style={{
                 width: playSize,

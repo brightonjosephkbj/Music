@@ -71,13 +71,16 @@ export default function PlayerCard({
   onPlayTrack,
   onShuffleToggle,
   shuffleOn: initialShuffleOn,
+  queue,
+  queueIndex,
+  onPlayQueueItem,
 }) {
   const { width: W, height: H } = useWindowDimensions();
   const topPad = (StatusBar.currentHeight || 28) + 6;
   const coverSize = Math.min(W - 64, H * 0.4);
   const A = useArtworkAccent(track?.artwork, trackAccent(track));
 
-  const [panel, setPanel] = useState(0);
+  const [panel, setPanel] = useState(1);
   const scrollRef = useRef(null);
   const lyricsScrollRef = useRef(null);
   const lineYs = useRef([]);
@@ -252,16 +255,76 @@ export default function PlayerCard({
       const found = data.tracks && data.tracks[0];
       if (found && onPlayTrack) {
         onPlayTrack(found);
-        goToPanel(0);
+        closeSheet();
       }
     } catch {}
   };
 
   // ---------------- Tabs ----------------
+  // SHEET_V2
+  const CARD_TABS = ["Up Next", "Lyrics", "Related"];
+  const CARD_PEEK = 78;
+  const sheet = useRef(new Animated.Value(0)).current;
+  const sheetVal = useRef(0);
+  const sheetStart = useRef(0);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const openTop = topPad + 48 + 72;
+  const closedTop = H - CARD_PEEK;
+  const sheetRange = closedTop - openTop;
+
+  useEffect(() => {
+    const id = sheet.addListener(({ value }) => {
+      sheetVal.current = value;
+      setSheetOpen(value > 0.5);
+    });
+    return () => sheet.removeListener(id);
+  }, []);
+
+  const animateSheet = (to) =>
+    Animated.spring(sheet, { toValue: to, useNativeDriver: false, bounciness: 3, speed: 14 }).start();
+  const closeSheet = () => animateSheet(0);
+
   const goToPanel = (idx) => {
-    scrollRef.current?.scrollTo({ x: idx * W, animated: true });
     setPanel(idx);
+    animateSheet(1);
+    setTimeout(() => scrollRef.current?.scrollTo({ x: idx * W, animated: true }), 0);
   };
+
+  L.current.animateSheet = animateSheet;
+  L.current.sheetRange = sheetRange;
+
+  const cardPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 6,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => {
+        sheet.stopAnimation();
+        sheetStart.current = sheetVal.current;
+      },
+      onPanResponderMove: (_, g) => {
+        const v = sheetStart.current - g.dy / (L.current.sheetRange || 1);
+        sheet.setValue(Math.max(0, Math.min(1, v)));
+      },
+      onPanResponderRelease: (_, g) => {
+        if (Math.abs(g.dy) < 5 && Math.abs(g.dx) < 5) {
+          L.current.animateSheet(1);
+          return;
+        }
+        const v = sheetVal.current;
+        const open = g.vy < -0.5 ? true : g.vy > 0.5 ? false : v > 0.5;
+        L.current.animateSheet(open ? 1 : 0);
+      },
+    })
+  ).current;
+
+  const coverScale = sheet.interpolate({ inputRange: [0, 1], outputRange: [1, 52 / coverSize] });
+  const coverTx = sheet.interpolate({ inputRange: [0, 1], outputRange: [0, 46 - W / 2] });
+  const coverTy = sheet.interpolate({ inputRange: [0, 1], outputRange: [0, 16 - coverSize / 2] });
+  const coverOpacity = sheet.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 1, 0], extrapolate: "clamp" });
+  const restOpacity = sheet.interpolate({ inputRange: [0, 0.35], outputRange: [1, 0], extrapolate: "clamp" });
+  const miniOpacity = sheet.interpolate({ inputRange: [0.5, 1], outputRange: [0, 1], extrapolate: "clamp" });
+  const cardTop = sheet.interpolate({ inputRange: [0, 1], outputRange: [closedTop, openTop] });
 
   // ---------------- Seek bar (draggable) ----------------
   const trackRef = useRef(null);
@@ -321,6 +384,10 @@ export default function PlayerCard({
       onPanResponderRelease: (_, g) => {
         const ax = Math.abs(g.dx);
         const ay = Math.abs(g.dy);
+        if (ay > ax && (g.dy < -50 || g.vy < -0.7)) {
+          L.current.animateSheet && L.current.animateSheet(1);
+          return;
+        }
         if (ay > ax && (g.dy > 120 || g.vy > 0.8)) {
           Animated.timing(dragY, {
             toValue: L.current.height,
@@ -446,7 +513,6 @@ export default function PlayerCard({
   // ---------------- UI ----------------
   return (
     <Animated.View style={[styles.root, { transform: [{ translateY: dragY }] }]}>
-      {/* Blurred artwork background */}
       {!!track?.artwork && (
         <Image
           source={{ uri: track.artwork }}
@@ -468,22 +534,13 @@ export default function PlayerCard({
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: topPad }]}>
         <TouchableOpacity
-          onPress={() => onCollapse && onCollapse()}
+          onPress={() => (sheetOpen ? closeSheet() : onCollapse && onCollapse())}
           style={styles.roundBtn}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
           <Ionicons name="chevron-down" size={22} color="#fff" />
         </TouchableOpacity>
-
-        <View style={styles.tabsRow}>
-          {TABS.map((t, i) => (
-            <TouchableOpacity key={t} onPress={() => goToPanel(i)} style={styles.tabBtn}>
-              <Text style={[styles.tabText, panel === i && { color: "#fff" }]}>{t}</Text>
-              <View style={[styles.tabLine, panel === i && { backgroundColor: A.solid }]} />
-            </TouchableOpacity>
-          ))}
-        </View>
-
+        <Text style={styles.topTitle}>Now Playing</Text>
         <TouchableOpacity
           onPress={openShareSheet}
           style={styles.roundBtn}
@@ -493,218 +550,295 @@ export default function PlayerCard({
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        pagingEnabled
-        scrollEnabled={false}
-        showsHorizontalScrollIndicator={false}
+      {/* Song page */}
+      <View
         style={{ flex: 1 }}
+        pointerEvents={sheetOpen ? "none" : "auto"}
+        {...pagePan.panHandlers}
       >
-        {/* ---------------- Panel 0: Song ---------------- */}
-        <View style={[styles.panel, { width: W }]} {...pagePan.panHandlers}>
+        <View style={[styles.panel, { width: W, flex: 1 }]}>
           <Animated.View
-            style={[
-              styles.coverWrap,
-              {
-                width: coverSize,
-                height: coverSize,
-                shadowColor: A.glow,
-                transform: [{ scale: breathe }],
-              },
-            ]}
+            style={{
+              opacity: coverOpacity,
+              transform: [{ translateX: coverTx }, { translateY: coverTy }, { scale: coverScale }],
+            }}
           >
-            {track?.artwork ? (
-              <Image source={{ uri: track.artwork }} style={styles.cover} />
-            ) : (
-              <View style={[styles.cover, styles.coverEmpty]}>
-                <Ionicons name="musical-notes" size={64} color="rgba(255,255,255,0.4)" />
-              </View>
-            )}
+            <Animated.View
+              style={[
+                styles.coverWrap,
+                { width: coverSize, height: coverSize, shadowColor: A.glow, transform: [{ scale: breathe }] },
+              ]}
+            >
+              {track?.artwork ? (
+                <Image source={{ uri: track.artwork }} style={styles.cover} />
+              ) : (
+                <View style={[styles.cover, styles.coverEmpty]}>
+                  <Ionicons name="musical-notes" size={64} color="rgba(255,255,255,0.4)" />
+                </View>
+              )}
+            </Animated.View>
           </Animated.View>
 
-          <View style={styles.titleRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.trackTitle} numberOfLines={2}>{track?.title}</Text>
-              <Text style={styles.trackArtist} numberOfLines={1}>{track?.artist}</Text>
-            </View>
-            <TouchableOpacity
-              onPress={downloadToLibrary}
-              disabled={libDownloading || libDownloaded}
-              style={styles.roundBtn}
-            >
-              {libDownloading ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : libDownloaded ? (
-                <Ionicons name="checkmark" size={20} color={A.solid} />
-              ) : (
-                <Ionicons name="download-outline" size={20} color="#fff" />
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {!!currentLine && (
-            <Text style={[styles.lyricPeek, { color: A.solid }]} numberOfLines={2}>
-              {currentLine}
-            </Text>
-          )}
-
-          {/* Seek bar */}
-          <View style={styles.progressRow}>
-            <View
-              ref={trackRef}
-              onLayout={measureTrack}
-              style={[styles.progressTrack, scrubbing && { height: 6 }]}
-              hitSlop={{ top: 18, bottom: 18 }}
-              {...seekPan.panHandlers}
-            >
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${progressPct * 100}%`, backgroundColor: A.solid },
-                ]}
-              />
-              <View
-                style={[
-                  styles.progressDot,
-                  {
-                    left: `${progressPct * 100}%`,
-                    backgroundColor: A.solid,
-                    transform: [{ scale: scrubbing ? 1.35 : 1 }],
-                  },
-                ]}
-              />
-            </View>
-            <View style={styles.timeRow}>
-              <Text style={styles.timeText}>{formatTime(shownPos)}</Text>
-              <Text style={styles.timeText}>{formatTime(duration)}</Text>
-            </View>
-          </View>
-
-          {/* Main controls */}
-          <View style={styles.controlsRow}>
-            <TouchableOpacity onPress={toggleShuffle} style={styles.sideBtn}>
-              <Ionicons name="shuffle" size={22} color={shuffleOn ? A.solid : "rgba(255,255,255,0.7)"} />
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => onPrev && onPrev()} style={styles.skipBtn}>
-              <Ionicons name="play-skip-back" size={30} color="#fff" />
-            </TouchableOpacity>
-
-            <Animated.View style={{ transform: [{ scale: playScale }] }}>
+          <Animated.View style={{ width: "100%", alignItems: "center", opacity: restOpacity }}>
+            <View style={styles.titleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.trackTitle} numberOfLines={2}>{track?.title}</Text>
+                <Text style={styles.trackArtist} numberOfLines={1}>{track?.artist}</Text>
+              </View>
               <TouchableOpacity
-                onPress={onPlayPausePress}
-                activeOpacity={0.85}
-                style={[styles.playBtn, { backgroundColor: A.solid, shadowColor: A.glow }]}
+                onPress={downloadToLibrary}
+                disabled={libDownloading || libDownloaded}
+                style={styles.roundBtn}
               >
-                <Ionicons
-                  name={engine?.isPlaying ? "pause" : "play"}
-                  size={32}
-                  color="#101010"
-                  style={engine?.isPlaying ? undefined : { marginLeft: 3 }}
-                />
+                {libDownloading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : libDownloaded ? (
+                  <Ionicons name="checkmark" size={20} color={A.solid} />
+                ) : (
+                  <Ionicons name="download-outline" size={20} color="#fff" />
+                )}
               </TouchableOpacity>
-            </Animated.View>
+            </View>
 
-            <TouchableOpacity onPress={() => onNext && onNext()} style={styles.skipBtn}>
-              <Ionicons name="play-skip-forward" size={30} color="#fff" />
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => goToPanel(2)} style={styles.sideBtn}>
-              <Ionicons name="albums-outline" size={22} color="rgba(255,255,255,0.7)" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Bottom action row */}
-          <View style={styles.actionRow}>
-            <TouchableOpacity onPress={() => goToPanel(1)} style={styles.actionBtn}>
-              <Ionicons name="text" size={19} color="#fff" />
-              <Text style={styles.actionLabel}>Lyrics</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={cycleSleepTimer} style={styles.actionBtn}>
-              <Ionicons
-                name={sleepMinutes ? "moon" : "moon-outline"}
-                size={19}
-                color={sleepMinutes ? A.solid : "#fff"}
-              />
-              <Text style={[styles.actionLabel, sleepMinutes && { color: A.solid }]}>
-                {sleepMinutes ? `${sleepMinutes}m` : "Sleep"}
+            {!!currentLine && (
+              <Text style={[styles.lyricPeek, { color: A.solid }]} numberOfLines={2}>
+                {currentLine}
               </Text>
-            </TouchableOpacity>
+            )}
 
-            <TouchableOpacity onPress={cycleSpeed} style={styles.actionBtn}>
-              <Ionicons name="speedometer-outline" size={19} color={playbackRate !== 1 ? A.solid : "#fff"} />
-              <Text style={[styles.actionLabel, playbackRate !== 1 && { color: A.solid }]}>
-                {playbackRate}x
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={openShareSheet} style={styles.actionBtn}>
-              <Ionicons name="paper-plane-outline" size={19} color="#fff" />
-              <Text style={styles.actionLabel}>Send</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* ---------------- Panel 1: Lyrics ---------------- */}
-        <View style={[styles.panel, { width: W, alignItems: "stretch" }]}>
-          <Text style={styles.panelHeading}>{track?.title}</Text>
-          {lyricsLoading ? (
-            <ActivityIndicator color="#fff" style={{ marginTop: 30 }} />
-          ) : lyrics.length === 0 ? (
-            <Text style={styles.emptyText}>No lyrics found for this track.</Text>
-          ) : (
-            <ScrollView
-              ref={lyricsScrollRef}
-              style={{ flex: 1 }}
-              contentContainerStyle={{ paddingBottom: 120 }}
-              showsVerticalScrollIndicator={false}
-            >
-              {lyrics.map((line, i) => (
-                <Text
-                  key={i}
-                  onLayout={(e) => {
-                    lineYs.current[i] = e.nativeEvent.layout.y;
-                  }}
+            <View style={styles.progressRow}>
+              <View
+                ref={trackRef}
+                onLayout={measureTrack}
+                style={[styles.progressTrack, scrubbing && { height: 6 }]}
+                hitSlop={{ top: 18, bottom: 18 }}
+                {...seekPan.panHandlers}
+              >
+                <View style={[styles.progressFill, { width: `${progressPct * 100}%`, backgroundColor: A.solid }]} />
+                <View
                   style={[
-                    styles.lyricLine,
-                    i === currentLineIndex && { color: "#fff", fontWeight: "800", fontSize: 22 },
+                    styles.progressDot,
+                    {
+                      left: `${progressPct * 100}%`,
+                      backgroundColor: A.solid,
+                      transform: [{ scale: scrubbing ? 1.35 : 1 }],
+                    },
                   ]}
+                />
+              </View>
+              <View style={styles.timeRow}>
+                <Text style={styles.timeText}>{formatTime(shownPos)}</Text>
+                <Text style={styles.timeText}>{formatTime(duration)}</Text>
+              </View>
+            </View>
+
+            <View style={styles.controlsRow}>
+              <TouchableOpacity onPress={toggleShuffle} style={styles.sideBtn}>
+                <Ionicons name="shuffle" size={22} color={shuffleOn ? A.solid : "rgba(255,255,255,0.7)"} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => onPrev && onPrev()} style={styles.skipBtn}>
+                <Ionicons name="play-skip-back" size={30} color="#fff" />
+              </TouchableOpacity>
+              <Animated.View style={{ transform: [{ scale: playScale }] }}>
+                <TouchableOpacity
+                  onPress={onPlayPausePress}
+                  activeOpacity={0.85}
+                  style={[styles.playBtn, { backgroundColor: A.solid, shadowColor: A.glow }]}
                 >
-                  {line.text}
+                  <Ionicons
+                    name={engine?.isPlaying ? "pause" : "play"}
+                    size={32}
+                    color="#101010"
+                    style={engine?.isPlaying ? undefined : { marginLeft: 3 }}
+                  />
+                </TouchableOpacity>
+              </Animated.View>
+              <TouchableOpacity onPress={() => onNext && onNext()} style={styles.skipBtn}>
+                <Ionicons name="play-skip-forward" size={30} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => goToPanel(0)} style={styles.sideBtn}>
+                <Ionicons name="list" size={22} color="rgba(255,255,255,0.7)" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.actionRow}>
+              <TouchableOpacity onPress={() => goToPanel(1)} style={styles.actionBtn}>
+                <Ionicons name="text" size={19} color="#fff" />
+                <Text style={styles.actionLabel}>Lyrics</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={cycleSleepTimer} style={styles.actionBtn}>
+                <Ionicons name={sleepMinutes ? "moon" : "moon-outline"} size={19} color={sleepMinutes ? A.solid : "#fff"} />
+                <Text style={[styles.actionLabel, sleepMinutes && { color: A.solid }]}>
+                  {sleepMinutes ? `${sleepMinutes}m` : "Sleep"}
                 </Text>
-              ))}
-            </ScrollView>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={cycleSpeed} style={styles.actionBtn}>
+                <Ionicons name="speedometer-outline" size={19} color={playbackRate !== 1 ? A.solid : "#fff"} />
+                <Text style={[styles.actionLabel, playbackRate !== 1 && { color: A.solid }]}>{playbackRate}x</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={openShareSheet} style={styles.actionBtn}>
+                <Ionicons name="paper-plane-outline" size={19} color="#fff" />
+                <Text style={styles.actionLabel}>Send</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </View>
+      </View>
+
+      {/* Mini row (appears when card is open) */}
+      <Animated.View
+        pointerEvents={sheetOpen ? "auto" : "none"}
+        style={[styles.miniRow, { top: topPad + 48, opacity: miniOpacity }]}
+      >
+        <TouchableOpacity
+          onPress={closeSheet}
+          activeOpacity={0.8}
+          style={{ flexDirection: "row", alignItems: "center", flex: 1 }}
+        >
+          {track?.artwork ? (
+            <Image source={{ uri: track.artwork }} style={styles.miniArt} />
+          ) : (
+            <View style={[styles.miniArt, styles.coverEmpty]}>
+              <Ionicons name="musical-notes" size={22} color="rgba(255,255,255,0.4)" />
+            </View>
           )}
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.miniTitle} numberOfLines={1}>{track?.title}</Text>
+            <Text style={styles.miniArtist} numberOfLines={1}>{track?.artist}</Text>
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => engine?.toggle()} style={[styles.miniPlay, { backgroundColor: A.solid }]}>
+          <Ionicons
+            name={engine?.isPlaying ? "pause" : "play"}
+            size={20}
+            color="#101010"
+            style={engine?.isPlaying ? undefined : { marginLeft: 2 }}
+          />
+        </TouchableOpacity>
+      </Animated.View>
+
+      {/* Swipe-up card */}
+      <Animated.View style={[styles.card, { top: cardTop }]}>
+        <View {...cardPan.panHandlers}>
+          <View style={styles.grab} />
+          <View style={styles.cardTabs}>
+            {CARD_TABS.map((tb, i) => (
+              <TouchableOpacity key={tb} onPress={() => goToPanel(i)} style={styles.tabBtn}>
+                <Text style={[styles.tabText, panel === i && { color: "#fff" }]}>{tb}</Text>
+                <View style={[styles.tabLine, panel === i && { backgroundColor: A.solid }]} />
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
-        {/* ---------------- Panel 2: Related ---------------- */}
-        <View style={[styles.panel, { width: W, alignItems: "stretch" }]}>
-          <Text style={styles.panelHeading}>Related</Text>
-          {relatedLoading ? (
-            <ActivityIndicator color="#fff" style={{ marginTop: 30 }} />
-          ) : related.length === 0 ? (
-            <Text style={styles.emptyText}>No related tracks found.</Text>
-          ) : (
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={{ paddingBottom: 120 }}
-              showsVerticalScrollIndicator={false}
-            >
-              {related.map((item, i) => (
-                <TouchableOpacity key={i} style={styles.relatedRow} onPress={() => playRelated(item)}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.relatedTitle} numberOfLines={1}>{item.title}</Text>
-                    <Text style={styles.relatedArtist} numberOfLines={1}>{item.artist}</Text>
-                  </View>
-                  <Ionicons name="play-circle-outline" size={24} color={A.solid} />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          )}
-        </View>
-      </ScrollView>
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          style={{ flex: 1 }}
+          onLayout={() => scrollRef.current?.scrollTo({ x: panel * W, animated: false })}
+          onMomentumScrollEnd={(e) => setPanel(Math.round(e.nativeEvent.contentOffset.x / W))}
+        >
+          {/* Up Next */}
+          <View style={[styles.cardPage, { width: W }]}>
+            {!queue || queue.length === 0 ? (
+              <Text style={styles.emptyText}>Nothing queued.</Text>
+            ) : (
+              <ScrollView
+                nestedScrollEnabled
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 120 }}
+                showsVerticalScrollIndicator={false}
+              >
+                {queue.map((q, i) => (
+                  <TouchableOpacity
+                    key={`${q.provider}-${q.id}-${i}`}
+                    style={styles.relatedRow}
+                    onPress={() =>
+                      onPlayQueueItem ? onPlayQueueItem(q, i) : onPlayTrack && onPlayTrack(q)
+                    }
+                  >
+                    {q.artwork ? (
+                      <Image source={{ uri: q.artwork }} style={styles.queueArt} />
+                    ) : (
+                      <View style={[styles.queueArt, styles.coverEmpty]} />
+                    )}
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text
+                        style={[styles.relatedTitle, i === queueIndex && { color: A.solid }]}
+                        numberOfLines={1}
+                      >
+                        {q.title}
+                      </Text>
+                      <Text style={styles.relatedArtist} numberOfLines={1}>{q.artist}</Text>
+                    </View>
+                    {i === queueIndex && <Ionicons name="volume-high" size={18} color={A.solid} />}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+
+          {/* Lyrics */}
+          <View style={[styles.cardPage, { width: W }]}>
+            {lyricsLoading ? (
+              <ActivityIndicator color="#fff" style={{ marginTop: 30 }} />
+            ) : lyrics.length === 0 ? (
+              <Text style={styles.emptyText}>No lyrics found for this track.</Text>
+            ) : (
+              <ScrollView
+                ref={lyricsScrollRef}
+                nestedScrollEnabled
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 120 }}
+                showsVerticalScrollIndicator={false}
+              >
+                {lyrics.map((line, i) => (
+                  <Text
+                    key={i}
+                    onLayout={(e) => {
+                      lineYs.current[i] = e.nativeEvent.layout.y;
+                    }}
+                    style={[
+                      styles.lyricLine,
+                      i === currentLineIndex && { color: "#fff", fontWeight: "800", fontSize: 22 },
+                    ]}
+                  >
+                    {line.text}
+                  </Text>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+
+          {/* Related */}
+          <View style={[styles.cardPage, { width: W }]}>
+            {relatedLoading ? (
+              <ActivityIndicator color="#fff" style={{ marginTop: 30 }} />
+            ) : related.length === 0 ? (
+              <Text style={styles.emptyText}>No related tracks found.</Text>
+            ) : (
+              <ScrollView
+                nestedScrollEnabled
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 120 }}
+                showsVerticalScrollIndicator={false}
+              >
+                {related.map((item, i) => (
+                  <TouchableOpacity key={i} style={styles.relatedRow} onPress={() => playRelated(item)}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.relatedTitle} numberOfLines={1}>{item.title}</Text>
+                      <Text style={styles.relatedArtist} numberOfLines={1}>{item.artist}</Text>
+                    </View>
+                    <Ionicons name="play-circle-outline" size={24} color={A.solid} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </ScrollView>
+      </Animated.View>
 
       {/* Share sheet */}
       <Modal
@@ -748,6 +882,28 @@ export default function PlayerCard({
 }
 
 const styles = StyleSheet.create({
+  topTitle: { color: "rgba(255,255,255,0.85)", fontSize: 14, fontWeight: "700" },
+  miniRow: { position: "absolute", left: 20, right: 20, height: 60, flexDirection: "row", alignItems: "center" },
+  miniArt: { width: 52, height: 52, borderRadius: 12 },
+  miniTitle: { color: "#fff", fontSize: 16, fontWeight: "800" },
+  miniArtist: { color: "rgba(255,255,255,0.65)", fontSize: 12, marginTop: 2 },
+  miniPlay: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginLeft: 10 },
+  card: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(14,16,24,0.97)",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    overflow: "hidden",
+  },
+  grab: { alignSelf: "center", width: 40, height: 4, borderRadius: 2, marginTop: 8, backgroundColor: "rgba(255,255,255,0.3)" },
+  cardTabs: { flexDirection: "row", justifyContent: "center", gap: 14, paddingTop: 6, paddingBottom: 4 },
+  cardPage: { paddingHorizontal: 22, paddingTop: 8, flex: 1 },
+  queueArt: { width: 44, height: 44, borderRadius: 8 },
   root: {
     position: "absolute",
     top: 0,

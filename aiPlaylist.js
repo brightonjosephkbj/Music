@@ -48,7 +48,7 @@ function scoreCandidate(track, artistHint) {
 // candidate instead of blindly taking the first result - the search API's
 // top hit is often a "Type Beat" or generic genre upload that happens to
 // match the query keywords, not the actual artist/song asked for.
-async function resolveQuery(query, artistHint) {
+export async function resolveQuery(query, artistHint) {
   const params = new URLSearchParams({ q: query });
   const res = await fetch(
     `${API_BASE}/api/apicache/api/music/search?${params.toString()}`,

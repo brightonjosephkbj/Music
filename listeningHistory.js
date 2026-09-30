@@ -10,6 +10,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const HISTORY_KEY = "b24music:listeningHistory";
 const MAX_HISTORY_ENTRIES = 500;
+const EVENTS_KEY = "b24music:playEvents";
+const MAX_EVENTS = 3000;
 
 async function getJSON(key, fallback) {
   try {
@@ -60,6 +62,9 @@ export async function logPlay(track) {
   };
   const next = [entry, ...withoutExisting].slice(0, MAX_HISTORY_ENTRIES);
   await setJSON(HISTORY_KEY, next);
+  const events = await getPlayEvents();
+  events.push({ id: trackId, provider, t: Date.now() });
+  await setJSON(EVENTS_KEY, events.slice(-MAX_EVENTS));
   console.log("[listeningHistory] logged:", entry.title, "-", entry.artist, `(x${entry.playCount})`);
   return next;
 }
@@ -73,6 +78,7 @@ export async function removeHistoryEntry(id, provider) {
 }
 
 export async function clearListeningHistory() {
+  await setJSON(EVENTS_KEY, []);
   return setJSON(HISTORY_KEY, []);
 }
 
@@ -104,4 +110,29 @@ export async function buildTasteProfile() {
   }));
 
   return { topArtists, recentTracks, totalPlays };
+}
+
+export const getPlayEvents = () => getJSON(EVENTS_KEY, []);
+
+// Most Played, optionally limited to plays since fromMs (0 = all time).
+// All time uses each entry's stored playCount so old plays still count;
+// date ranges count timestamp events, which only exist from now on.
+export async function getMostPlayed(fromMs = 0) {
+  const [history, events] = await Promise.all([
+    getListeningHistory(),
+    getPlayEvents(),
+  ]);
+  const counts = {};
+  for (const e of events) {
+    if (e.t < fromMs) continue;
+    const k = `${e.provider}|${e.id}`;
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  return history
+    .map((h) => ({
+      ...h,
+      rangeCount: fromMs ? counts[`${h.provider}|${h.id}`] || 0 : h.playCount || 1,
+    }))
+    .filter((h) => h.rangeCount > 0)
+    .sort((a, b) => b.rangeCount - a.rangeCount || b.playedAt - a.playedAt);
 }

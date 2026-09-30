@@ -56,7 +56,6 @@ export default function ActionTilesRow({ onPasteLinkPress, onDownloadsPress, onA
   return (
     <View style={styles.row}>
       <ActionTile meta={TILES_META.paste} onPress={onPasteLinkPress} />
-      <ActionTile meta={TILES_META.downloads} onPress={onDownloadsPress} />
       <ActionTile meta={TILES_META.ai} onPress={onAIChatPress} />
     </View>
   );
@@ -66,20 +65,20 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", gap: 10, marginBottom: 20 },
   tile: {
     flex: 1,
-    height: 88,
+    height: 100,
     borderRadius: 16,
     overflow: "hidden",
     padding: 10,
     justifyContent: "space-between",
   },
   iconGlass: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: "rgba(255,255,255,0.22)",
     alignItems: "center",
     justifyContent: "center",
   },
-  tileLabel: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  tileSubtitle: { color: "rgba(255,255,255,0.85)", fontSize: 10, marginTop: 1 },
+  tileLabel: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  tileSubtitle: { color: "rgba(255,255,255,0.85)", fontSize: 11, marginTop: 1 },
 });

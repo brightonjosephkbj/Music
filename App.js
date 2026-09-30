@@ -19,6 +19,7 @@ import TriviaScreen from "./TriviaScreen";
 import JokesScreen from "./JokesScreen";
 import FoodScreen from "./FoodScreen";
 import RecentScreen from "./RecentScreen";
+import MostPlayedScreen from "./MostPlayedScreen";
 import AIChatScreen from "./AIChatScreen";
 import InboxScreen from "./InboxScreen"; /* app_inbox_wiring_patch */
 import ShareThreadScreen from "./ShareThreadScreen";
@@ -241,6 +242,7 @@ export default function App() {
   // through - not just the single track that happened to be tapped.
   const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(-1);
+  const originalQueueRef = useRef(null);
 
   // Single playback engine instance, lifted here so both the mini
   // disc/video-box (in AppShell) and the expanded Player/full-screen video
@@ -269,6 +271,39 @@ export default function App() {
     setSelectedShareFriend(null);
   };
 
+  const shuffleWithFirst = (list, first) => {
+    const rest = list.filter((t) => t !== first);
+    for (let i = rest.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [rest[i], rest[j]] = [rest[j], rest[i]];
+    }
+    return [first, ...rest];
+  };
+
+  const toggleShuffle = (on) => {
+    setShuffleOn(on);
+    if (!queue.length) return;
+    const cur = queue[queueIndex];
+    if (on) {
+      if (!originalQueueRef.current) originalQueueRef.current = queue;
+      setQueue(shuffleWithFirst(queue, cur));
+      setQueueIndex(0);
+    } else {
+      const orig = originalQueueRef.current || queue;
+      const i = orig.findIndex((t) => cur && t.provider === cur.provider && t.id === cur.id);
+      setQueue(orig);
+      setQueueIndex(i < 0 ? 0 : i);
+    }
+  };
+
+  // Tapping a song in Up Next jumps within the queue; anything else starts fresh.
+  const playFromQueue = (track, src) => {
+    if (src && src.length) return playTrack(track, src);
+    const i = queue.findIndex((t) => t.provider === track.provider && t.id === track.id);
+    if (i >= 0) return playAtIndex(i);
+    return playTrack(track);
+  };
+
   // sourceQueue is optional - pass the list a track was tapped from (e.g.
   // Home's displayedTracks) so prev/next can walk it. Omit it (e.g. a
   // related-track pick inside the expanded player) and it starts a fresh
@@ -279,8 +314,15 @@ export default function App() {
     const idx = nextQueue.findIndex(
       (t) => t.provider === track.provider && t.id === track.id
     );
-    setQueue(nextQueue);
-    setQueueIndex(idx === -1 ? 0 : idx);
+    originalQueueRef.current = nextQueue;
+    const startIdx = idx === -1 ? 0 : idx;
+    if (shuffleOn && nextQueue.length > 1) {
+      setQueue(shuffleWithFirst(nextQueue, nextQueue[startIdx]));
+      setQueueIndex(0);
+    } else {
+      setQueue(nextQueue);
+      setQueueIndex(startIdx);
+    }
     setNowPlaying(track);
     resolveDeviceArtwork(track, setNowPlaying);
     // Video tracks jump straight to full-screen per spec; audio tracks stay
@@ -363,6 +405,7 @@ export default function App() {
     registerPlaybackControls({
       toggle: () => engine.toggle(),
       next: nextTrack,
+    playTrack: (t, q) => playTrack(t, q),
       prev: prevTrack,
       getState: () => ({
         isPlaying: engine.isPlaying,
@@ -408,6 +451,8 @@ export default function App() {
     content = <PasteUrlScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "recent") {
     content = <RecentScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
+  } else if (activeDrawerScreen === "mostPlayed") {
+    content = <MostPlayedScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "aiChat") {
     content = <AIChatScreen onClose={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "inbox") {
@@ -449,7 +494,7 @@ export default function App() {
       />
     );
   } else if (activeNav === "library") {
-    content = <LibraryScreen onTrackPress={playTrack} onSearchPress={() => setActiveNav("search")} />;
+    content = <LibraryScreen onTrackPress={playTrack} onSearchPress={() => setActiveNav("search")} onMostPlayedPress={() => goToDrawerScreen("mostPlayed")} />;
   } else if (activeNav === "search") {
     content = <SearchScreen onTrackPress={playTrack} />;
   } else if (activeNav === "settings") {
@@ -507,9 +552,11 @@ export default function App() {
           onCollapse={collapsePlayer}
           onNext={nextTrack}
           onPrev={prevTrack}
-          onPlayTrack={playTrack}
+          onPlayTrack={playFromQueue}
           shuffleOn={shuffleOn}
-          onShuffleToggle={setShuffleOn}
+          onShuffleToggle={toggleShuffle}
+          queue={queue.length ? [...queue.slice(queueIndex + 1), ...queue.slice(0, Math.max(queueIndex, 0))] : []}
+          queueIndex={-1}
         />
       )}
       {playerExpanded && nowPlaying && isVideo && (

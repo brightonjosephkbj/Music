@@ -1,0 +1,173 @@
+import React, { useEffect, useRef, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Image,
+  Dimensions,
+} from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
+
+const CARD_W = Dimensions.get("window").width - 40; // HomeScreen has 20px side padding
+const CARD_H = 172;
+const ORCHID = "#C89BFF";
+const AUTO_MS = 5000;
+
+// A slide is: { key, label, title, tagline, artwork, colors: [c1, c2], onPlay }
+// Later slides (Made For You, Shared with you, podcast, alerts) are just more
+// objects pushed into this list - no layout changes needed.
+export function buildHeroSlides(tracks, onTrackPress) {
+  const slides = [];
+  if (tracks && tracks.length > 0) {
+    const top = tracks[0];
+    slides.push({
+      key: "trending",
+      label: "TRENDING NOW",
+      title: top.title,
+      tagline: `${top.artist} · ${Math.min(tracks.length, 15)} hot tracks`,
+      artwork: top.artwork,
+      colors: ["#2D1B4E", "#7B2FF7"],
+      onPlay: () => onTrackPress && onTrackPress(top, tracks),
+    });
+  }
+  return slides;
+}
+
+export default function HeroCard({ slides = [] }) {
+  const [index, setIndex] = useState(0);
+  const scrollRef = useRef(null);
+  const indexRef = useRef(0);
+  const pausedRef = useRef(false);
+  const resumeTimer = useRef(null);
+
+  // Auto-swipe, only when there is more than one slide.
+  useEffect(() => {
+    if (slides.length < 2) return;
+    const id = setInterval(() => {
+      if (pausedRef.current) return;
+      const next = (indexRef.current + 1) % slides.length;
+      scrollRef.current?.scrollTo({ x: next * CARD_W, animated: true });
+      indexRef.current = next;
+      setIndex(next);
+    }, AUTO_MS);
+    return () => clearInterval(id);
+  }, [slides.length]);
+
+  useEffect(() => () => resumeTimer.current && clearTimeout(resumeTimer.current), []);
+
+  if (slides.length === 0) return null;
+
+  const pause = () => {
+    pausedRef.current = true;
+    if (resumeTimer.current) clearTimeout(resumeTimer.current);
+  };
+  const resumeSoon = () => {
+    if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    resumeTimer.current = setTimeout(() => {
+      pausedRef.current = false;
+    }, AUTO_MS);
+  };
+  const onSettle = (e) => {
+    const i = Math.round(e.nativeEvent.contentOffset.x / CARD_W);
+    indexRef.current = i;
+    setIndex(i);
+    resumeSoon();
+  };
+
+  return (
+    <View style={styles.wrap}>
+      <View style={styles.clip}>
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onScrollBeginDrag={pause}
+          onMomentumScrollEnd={onSettle}
+          scrollEventThrottle={16}
+          nestedScrollEnabled
+        >
+          {slides.map((s) => (
+            <TouchableOpacity
+              key={s.key}
+              activeOpacity={0.92}
+              onPress={s.onPlay}
+              style={styles.slide}
+            >
+              <LinearGradient
+                colors={s.colors}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              {!!s.artwork && (
+                <Image
+                  source={{ uri: s.artwork }}
+                  style={styles.art}
+                  resizeMode="cover"
+                />
+              )}
+              <LinearGradient
+                colors={["rgba(11,10,15,0.95)", "rgba(11,10,15,0.55)", "rgba(11,10,15,0.1)"]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={StyleSheet.absoluteFill}
+              />
+
+              <View style={styles.textCol}>
+                <Text style={styles.label}>{s.label}</Text>
+                <Text style={styles.title} numberOfLines={2}>
+                  {s.title}
+                </Text>
+                <Text style={styles.tagline} numberOfLines={2}>
+                  {s.tagline}
+                </Text>
+                <TouchableOpacity style={styles.playBtn} onPress={s.onPlay} activeOpacity={0.85}>
+                  <Ionicons name={s.icon || "play"} size={14} color="#0B0A0F" />
+                  <Text style={styles.playTxt}>{s.cta || "Play"}</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {slides.length > 1 && (
+        <View style={styles.dots}>
+          {slides.map((s, i) => (
+            <View key={s.key} style={[styles.dot, i === index && styles.dotOn]} />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { marginBottom: 16 },
+  clip: { width: CARD_W, height: CARD_H, borderRadius: 26, overflow: "hidden" },
+  slide: { width: CARD_W, height: CARD_H, justifyContent: "center" },
+  art: { position: "absolute", top: 0, right: 0, width: CARD_W * 0.5, height: CARD_H },
+  textCol: { paddingHorizontal: 18, width: "72%" },
+  label: { color: ORCHID, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
+  title: { color: "#F5F3FA", fontSize: 20, fontWeight: "800", marginTop: 4 },
+  tagline: { color: "rgba(245,243,250,0.7)", fontSize: 12, marginTop: 4 },
+  playBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    marginTop: 12,
+    backgroundColor: ORCHID,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
+  },
+  playTxt: { color: "#0B0A0F", fontWeight: "800", fontSize: 13 },
+  dots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 10 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.3)" },
+  dotOn: { backgroundColor: "#fff", width: 18 },
+});

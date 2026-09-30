@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { streamChatMessage, generateChatPlaylist } from "./aiChat";
 import MessageContent from "./MessageContent";
+import useJoyVoice from "./useJoyVoice";
+import { runJoyIntent, CMD_RE } from "./joyActions";
 
 const GLASS_BG = "rgba(255,255,255,0.08)";
 const GLASS_BORDER = "rgba(255,255,255,0.15)";
@@ -29,6 +31,12 @@ export default function AIChatScreen({ onClose }) {
   const [error, setError] = useState(null);
   const [mode, setMode] = useState("chat"); // "chat" | "playlist"
   const listRef = useRef(null);
+
+  const sendRef = useRef(null);
+  const voice = useJoyVoice({ onCommand: (t) => { sendRef.current && sendRef.current(t); } });
+  const voiceRef = useRef(null);
+  voiceRef.current = voice;
+  useEffect(() => { if (!sending) voice.resumeMusic(); }, [sending]);
 
   const sendPlaylistRequest = useCallback(async (text) => {
     const statusId = nextId();
@@ -60,15 +68,30 @@ export default function AIChatScreen({ onClose }) {
     }
   }, []);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
+  const send = useCallback(async (override) => {
+    const fromVoice = typeof override === "string";
+    const text = (fromVoice ? override : input).trim();
     if (!text || sending) return;
 
-    const userMsg = { id: nextId(), role: "user", content: text };
+    const userMsg = { id: nextId(), role: "user", content: fromVoice ? "\uD83C\uDFA4 " + text : text };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setError(null);
     setSending(true);
+
+    if (mode !== "playlist" && (fromVoice || CMD_RE.test(text))) {
+      try {
+        const reply = await runJoyIntent(text, {
+          cancelResume: () => voiceRef.current && voiceRef.current.cancelResume(),
+        });
+        if (reply) {
+          setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: reply }]);
+          setSending(false);
+          requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+          return;
+        }
+      } catch {}
+    }
 
     if (mode === "playlist") {
       sendPlaylistRequest(text);
@@ -130,6 +153,7 @@ export default function AIChatScreen({ onClose }) {
       setSending(false);
     }
   }, [input, sending, mode, sendPlaylistRequest]);
+  sendRef.current = send;
 
   const resetChat = useCallback(async () => {
     setMessages([]);
@@ -216,6 +240,42 @@ export default function AIChatScreen({ onClose }) {
 
       {!!error && <Text style={styles.errorText}>{error}</Text>}
 
+      {voice.listening && (
+        <View style={styles.joyStrip}>
+          <View style={styles.joyMeterRow}>
+            <Ionicons name="mic" size={12} color="rgba(255,255,255,0.6)" />
+            <View style={styles.joyMeterTrack}>
+              <View style={[styles.joyMeterFill, {
+                width: `${Math.max(0, Math.min(100, ((voice.db + 60) / 60) * 100))}%`,
+                backgroundColor: voice.db > voice.threshold ? "#4ade80" : "#6b7280",
+              }]} />
+            </View>
+            <Text style={styles.joyDb}>{Math.round(voice.db)} dB</Text>
+          </View>
+          <Text style={styles.joyStatus}>
+            {voice.phase === "command" ? "Listening for your request..." : voice.phase === "processing" ? "Transcribing..." : voice.hearing ? "Hearing you..." : 'Say "Hi Joy"...'}
+          </Text>
+          {!!voice.heard && (
+            <Text style={[styles.joyHeard, voice.heard.wake && { color: "#4ade80" }]}>
+              You said: "{voice.heard.text}"
+            </Text>
+          )}
+          {!!voice.note && <Text style={styles.joyNote}>{voice.note}</Text>}
+        </View>
+      )}
+
+      <View style={styles.joyRow}>
+        <TouchableOpacity
+          style={[styles.modePill, voice.listening && styles.joyPillOn, voice.phase === "command" && styles.joyPillHot]}
+          onPress={voice.toggle}
+        >
+          <Ionicons name={voice.listening ? "mic" : "mic-off-outline"} size={13} color={voice.listening ? "#000" : "rgba(255,255,255,0.6)"} />
+          <Text style={[styles.modePillText, voice.listening && styles.modePillTextActive]}>
+            {!voice.listening ? "Hi Joy: off" : voice.phase === "command" ? "Listening..." : voice.phase === "processing" ? "Thinking..." : 'Say "Hi Joy"'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.modeRow}>
         <TouchableOpacity
           style={[styles.modePill, mode === "chat" && styles.modePillActive]}
@@ -257,6 +317,17 @@ export default function AIChatScreen({ onClose }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#020202" },
+  joyRow: { flexDirection: "row", paddingHorizontal: 16, paddingBottom: 6 },
+  joyPillOn: { backgroundColor: "#4ade80" },
+  joyPillHot: { backgroundColor: "#f87171" },
+  joyStrip: { marginHorizontal: 16, marginBottom: 8, padding: 10, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.06)" },
+  joyMeterRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  joyMeterTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.12)", overflow: "hidden" },
+  joyMeterFill: { height: 6, borderRadius: 3 },
+  joyDb: { color: "rgba(255,255,255,0.5)", fontSize: 11, width: 52, textAlign: "right" },
+  joyStatus: { color: "rgba(255,255,255,0.7)", fontSize: 12, marginTop: 6 },
+  joyHeard: { color: "rgba(255,255,255,0.65)", fontSize: 13, marginTop: 4 },
+  joyNote: { color: "#f87171", fontSize: 12, marginTop: 4 },
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingTop: 56, paddingHorizontal: 20, paddingBottom: 14,

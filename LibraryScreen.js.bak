@@ -1,3 +1,20 @@
+import { useRef as __useRef } from "react";
+const LIB_ORCHID = "#C89BFF";
+const TAB_ICONS = {
+  Videos: "film",
+  "All Songs": "musical-notes",
+  Search: "search",
+  Folders: "folder",
+  Playlists: "albums",
+  Artists: "person",
+  Downloads: "download",
+};
+import ArtistHero from "./ArtistHero";
+import { splitArtists } from "./artistImages";
+import { memoGet, memoSet } from "./memoCache";
+import { sortTracks, loadArtistSort, saveArtistSort, loadPlayCounts, loadAllSongsSort, saveAllSongsSort } from "./artistSort";
+import AllSongsSortSheet, { SORT_LABELS } from "./AllSongsSortSheet";
+import LibraryArtistRow from "./LibraryArtistRow";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
@@ -31,6 +48,7 @@ import {
   deletePlaylist,
 } from "./libraryStorage";
 import ContextMenuCard from "./ContextMenuCard";
+import useArtworkAccent from "./useArtworkAccent";
 import ImageViewer from "./ImageViewer";
 import { scanDeviceMedia } from "./localMediaScanner";
 import { useDownloads } from "./DownloadsContext";
@@ -53,7 +71,7 @@ const PL_GLASS_BORDER = "rgba(255,255,255,0.09)";
 const PL_DARK_GRAY = "#2A2A2E";
 
 const TABS = ["Videos", "All Songs", "Search", "Folders", "Playlists", "Artists", "Downloads"];
-const AS_AMBER = "#F5A623";
+const AS_AMBER = "#C89BFF";
 const AS_GOLD = "#D4AF37";
 const AS_NEON = "#00FF88";
 const AS_GLASS_BG = "rgba(255,255,255,0.05)";
@@ -89,7 +107,7 @@ function playlistAccent(ids) {
 
 let deviceMediaCache = null;
 
-export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrackId }) {
+export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearchPress, currentTrackId }) {
   const { activeDownloads, pauseDownload, resumeDownload, cancelDownload } = useDownloads();
   const [activeTab, setActiveTab] = useState("Playlists");
   const [downloads, setDownloads] = useState([]);
@@ -107,6 +125,8 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   // Playlist tab extras
   const [playlistSearch, setPlaylistSearch] = useState("");
   const [songSearchQuery, setSongSearchQuery] = useState("");
+  const [allSortMode, setAllSortMode] = useState("recent");
+  const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [editPlaylistVisible, setEditPlaylistVisible] = useState(false);
   const [editPlaylistTarget, setEditPlaylistTarget] = useState(null);
   const [editPlaylistName, setEditPlaylistName] = useState("");
@@ -159,6 +179,8 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   const [selectedFolder, setSelectedFolder] = useState(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
   const [selectedArtist, setSelectedArtist] = useState(null);
+  const [artistSortMode, setArtistSortMode] = useState("recent");
+  const [artistPlayCounts, setArtistPlayCounts] = useState({});
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -435,12 +457,14 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   const allSongs = useMemo(() => [...appAudio, ...deviceAudio], [appAudio, deviceAudio]);
   const searchSongs = useMemo(() => downloads.filter((d) => d.fromSearch === true), [downloads]);
   const filteredAllSongs = useMemo(() => {
-    if (!songSearchQuery.trim()) return allSongs;
+    const base =
+      allSortMode === "recent" ? allSongs : sortTracks(allSongs, allSortMode, artistPlayCounts);
+    if (!songSearchQuery.trim()) return base;
     const q = songSearchQuery.toLowerCase();
-    return allSongs.filter(
+    return base.filter(
       (s) => (s.title || "").toLowerCase().includes(q) || (s.artist || "").toLowerCase().includes(q)
     );
-  }, [allSongs, songSearchQuery]);
+  }, [allSongs, songSearchQuery, allSortMode, artistPlayCounts]);
 
   const allMedia = useMemo(() => {
     const map = new Map();
@@ -451,14 +475,27 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   }, [downloads, deviceAudio, deviceVideo]);
 
   const artistGroups = useMemo(() => {
-    return [...allSongs, ...videos].reduce((acc, d) => {
-      const key = d.artist || "Unknown Artist";
-      acc[key] = acc[key] || [];
-      acc[key].push(d);
-      return acc;
-    }, {});
+    const names = new Map();
+    const groups = {};
+    [...allSongs, ...videos].forEach((d) => {
+      const list = splitArtists(d.artist);
+      (list.length ? list : ["Unknown Artist"]).forEach((n) => {
+        const k = n.toLowerCase();
+        if (!names.has(k)) names.set(k, n);
+        const name = names.get(k);
+        (groups[name] = groups[name] || []).push(d);
+      });
+    });
+    if (Object.keys(groups).length > 0) {
+      memoSet("libArtistGroups", groups);
+      return groups;
+    }
+    return memoGet("libArtistGroups") || groups;
   }, [allSongs, videos]);
-  const artistEntries = useMemo(() => Object.entries(artistGroups), [artistGroups]);
+  const artistEntries = useMemo(
+    () => Object.entries(artistGroups).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])),
+    [artistGroups]
+  );
 
   const getPlaylistArt = useCallback((playlist) => {
     if (playlist.art) return { uri: playlist.art };
@@ -661,13 +698,22 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   }, [selectedGroupPlaylist, groupCurrentUserId, groupInfoName, groupInfoArtUri, loadAll]);
 
   const openSortMenu = useCallback(() => {
+    if (selectedArtist) {
+      const pick = (mode) => { setArtistSortMode(mode); saveArtistSort(mode); };
+      Alert.alert("Sort songs", "", [
+        { text: "Recently Added", onPress: () => pick("recent") },
+        { text: "Title A-Z", onPress: () => pick("title") },
+        { text: "Most Played", onPress: () => pick("played") },
+      ]);
+      return;
+    }
     Alert.alert("Sort by", "", [
       { text: "Recently Added", onPress: () => setPlaylistSortMode("recent") },
       { text: "Album", onPress: () => setPlaylistSortMode("album") },
       { text: "Artist", onPress: () => setPlaylistSortMode("artist") },
       { text: "Cancel", style: "cancel" },
     ]);
-  }, []);
+  }, [selectedArtist]);
 
   const confirmRemoveSelected = useCallback(() => {
     if (!selectedPlaylist || editSelectedIds.size === 0) return;
@@ -733,8 +779,15 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
   const artistTracks = useMemo(() => {
     if (!selectedArtist) return [];
-    return artistGroups[selectedArtist] || [];
-  }, [selectedArtist, artistGroups]);
+    return sortTracks(artistGroups[selectedArtist] || [], artistSortMode, artistPlayCounts);
+  }, [selectedArtist, artistGroups, artistSortMode, artistPlayCounts]);
+
+  useEffect(() => {
+    loadArtistSort().then(setArtistSortMode);
+  }, []);
+  useEffect(() => {
+    if (selectedArtist) loadPlayCounts().then(setArtistPlayCounts);
+  }, [selectedArtist]);
 
   useEffect(() => {
     if (selectedFolder) {
@@ -787,10 +840,12 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     setImageViewerVisible(true);
   }, [allMedia]);
 
-  const plAccent = useMemo(
+  const plFallbackAccent = useMemo(
     () => playlistAccent(selectedPlaylist ? selectedPlaylist.trackIds || [] : []),
     [selectedPlaylist]
   );
+  const plArtForColor = selectedPlaylist ? getPlaylistArt(selectedPlaylist) : null;
+  const plAccent = useArtworkAccent(plArtForColor && plArtForColor.uri, plFallbackAccent);
 
   const renderTrackRow = useCallback(
     ({ item }) => {
@@ -905,10 +960,14 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
       const isActive = !!currentTrackId && item.id === currentTrackId;
       return (
         <TouchableOpacity
-          style={[styles.asRow, isActive && styles.asRowActive]}
+          style={[
+            styles.asRow,
+            isActive && styles.asRowActive,
+            { borderWidth: 0, borderRadius: 14, backgroundColor: isActive ? "rgba(200,155,255,0.12)" : "transparent" },
+          ]}
           onPress={() => {
             if (item.type === "image") return openImage(item);
-            if (onTrackPress) onTrackPress(item, allSongs);
+            if (onTrackPress) onTrackPress(item, filteredAllSongs);
           }}
           onLongPress={(evt) => openMenu(evt, item)}
           delayLongPress={300}
@@ -933,7 +992,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
           <View style={styles.asRowTextWrap}>
             <View style={styles.asRowTitleRow}>
-              <Text numberOfLines={1} style={styles.asRowTitle}>{item.title}</Text>
+              <Text numberOfLines={1} style={[styles.asRowTitle, isActive && { color: LIB_ORCHID }]}>{item.title}</Text>
               {isActive && (
                 <View style={styles.asNowBadge}>
                   <Text style={styles.asNowBadgeText}>NOW</Text>
@@ -958,7 +1017,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         </TouchableOpacity>
       );
     },
-    [allSongs, onTrackPress, openMenu, openImage, currentTrackId]
+    [filteredAllSongs, onTrackPress, openMenu, openImage, currentTrackId]
   );
 
   const renderPlaylistDetailHeader = () => {
@@ -1180,6 +1239,45 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
     </>
   );
 
+  useEffect(() => {
+    loadAllSongsSort().then(setAllSortMode);
+  }, []);
+  useEffect(() => {
+    if (allSortMode === "played") loadPlayCounts().then(setArtistPlayCounts);
+  }, [allSortMode]);
+
+  const tabListRef = __useRef(null);
+  useEffect(() => {
+    const i = TABS.indexOf(activeTab);
+    if (i >= 0 && tabListRef.current) {
+      try {
+        tabListRef.current.scrollToIndex({ index: i, viewPosition: 0.5, animated: true });
+      } catch {}
+    }
+  }, [activeTab]);
+
+  const artistHeroEl = selectedArtist ? (
+    <ArtistHero
+      artist={selectedArtist}
+      tracks={artistTracks}
+      onBack={() => closeDetail()}
+      onPlay={() => {
+        if (artistTracks.length > 0 && onTrackPress) onTrackPress(artistTracks[0], artistTracks);
+      }}
+      onShuffle={() => {
+        if (artistTracks.length === 0 || !onTrackPress) return;
+        const q = [...artistTracks];
+        for (let i = q.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [q[i], q[j]] = [q[j], q[i]];
+        }
+        onTrackPress(q[0], q);
+      }}
+      onSort={() => openSortMenu()}
+      onSearch={onSearchPress}
+    />
+  ) : null;
+
   const detailMode = !!(selectedFolder || selectedPlaylist || selectedArtist || selectedGroupPlaylist);
   let detailData = [];
   let detailTitle = "";
@@ -1280,19 +1378,24 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         </>
       )}
 
-      <View style={styles.header}>
+      <View style={[styles.header, selectedArtist && { display: "none" }]}>
         {detailMode ? (
           <TouchableOpacity onPress={closeDetail} style={styles.backButtonRow} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={styles.backGlyph}>‹</Text>
             {!selectedPlaylist && !selectedGroupPlaylist && <Text style={styles.title} numberOfLines={1}>{detailTitle}</Text>}
           </TouchableOpacity>
         ) : (
-          <Text style={styles.title}>Your library</Text>
+          <View>
+            <Text style={styles.title}>Your library</Text>
+            <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>
+              {allSongs.length} songs · {videos.length} videos
+            </Text>
+          </View>
         )}
         <View style={styles.headerActions}>
           {!selectedPlaylist && !selectedGroupPlaylist && (
             <TouchableOpacity style={styles.iconButton} onPress={onSearchPress}>
-              <Text style={styles.iconGlyph}>Search</Text>
+              <Ionicons name="search" size={17} color="#fff" />
             </TouchableOpacity>
           )}
           {selectedPlaylist && (
@@ -1364,7 +1467,10 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         <FlatList
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={styles.tabRow}
+          ref={tabListRef}
+          onScrollToIndexFailed={() => {}}
+          contentContainerStyle={{ paddingRight: 20, alignItems: "center" }}
+          style={[styles.tabRow, { height: 52 }]}
           data={TABS}
           keyExtractor={(t) => t}
           renderItem={({ item: tab }) => {
@@ -1372,9 +1478,20 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
             return (
               <TouchableOpacity
                 onPress={() => setActiveTab(tab)}
-                style={[styles.tab, active && styles.tabActive]}
+                style={[
+                  styles.tab,
+                  active && styles.tabActive,
+                  { flexDirection: "row", alignItems: "center", justifyContent: "center", height: 40, paddingVertical: 0 },
+                  active && { backgroundColor: LIB_ORCHID, borderColor: LIB_ORCHID },
+                ]}
               >
-                <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab}</Text>
+                <Ionicons
+                  name={TAB_ICONS[tab] || "ellipse"}
+                  size={15}
+                  color={active ? "#0B0A0F" : "#fff"}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.tabText, active && styles.tabTextActive, { includeFontPadding: false }]}>{tab}</Text>
               </TouchableOpacity>
             );
           }}
@@ -1388,7 +1505,7 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
           renderItem={selectedGroupPlaylist ? renderGroupTrackRow : renderTrackRow}
           ListHeaderComponent={
             selectedPlaylist ? renderPlaylistDetailHeader :
-            selectedGroupPlaylist ? renderGroupPlaylistDetailHeader : null
+            selectedGroupPlaylist ? renderGroupPlaylistDetailHeader : selectedArtist ? artistHeroEl : null
           }
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={<Text style={styles.emptyText}>{detailEmptyText}</Text>}
@@ -1441,55 +1558,80 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
                       }}
                     />
                   </View>
-                  <View style={styles.asHeroCard}>
-                    <View style={styles.asHeroGlow} pointerEvents="none" />
-                    <View style={styles.asHeroTopRow}>
-                      <View style={styles.asHeroLeftRow}>
-                        <View style={styles.asHeroIconWrap}>
-                          <Ionicons name="sync" size={18} color={AS_AMBER} />
-                        </View>
-                        <View>
-                          <Text style={styles.asHeroTitle}>Sync Storage</Text>
-                          <Text style={styles.asHeroSubtitle}>Deep device audio scan</Text>
-                        </View>
-                      </View>
-                      <View style={styles.asHeroBadge}>
-                        <View style={styles.asHeroBadgeDot} />
-                        <Text style={styles.asHeroBadgeText}>{allSongs.length} Local Files</Text>
-                      </View>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                      backgroundColor: "rgba(255,255,255,0.06)",
+                      borderRadius: 14,
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <Ionicons name="sync" size={18} color={LIB_ORCHID} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: "#F5F3FA", fontWeight: "700", fontSize: 13 }}>
+                        {allSongs.length} local files
+                      </Text>
+                      <Text
+                        style={{ color: scanErrorMsg ? "#FF6B6B" : "rgba(255,255,255,0.5)", fontSize: 11, marginTop: 1 }}
+                        numberOfLines={1}
+                      >
+                        {scanDenied
+                          ? "Storage permission denied - enable it in app settings"
+                          : scanErrorMsg
+                          ? scanErrorMsg
+                          : lastScanCounts
+                          ? `Last scan: ${lastScanCounts.audio} audio, ${lastScanCounts.video} video`
+                          : "Scan your device for new files"}
+                      </Text>
                     </View>
+                    <TouchableOpacity style={styles.asHeroRescanBtn} onPress={runScan} disabled={scanning}>
+                      <Text style={styles.asHeroRescanText}>{scanning ? "Scanning..." : "Rescan"}</Text>
+                    </TouchableOpacity>
+                  </View>
 
-                    <View style={styles.asHeroBottomRow}>
-                      <View style={{ flex: 1, marginRight: 10 }}>
-                        {scanDenied && (
-                          <Text style={styles.asHeroStatsText} numberOfLines={2}>
-                            Storage permission was denied - enable it in your phone's app settings to see local songs here.
-                          </Text>
-                        )}
-                        {!!scanErrorMsg && (
-                          <Text style={[styles.asHeroStatsText, { color: "#FF6B6B" }]} numberOfLines={2}>{scanErrorMsg}</Text>
-                        )}
-                        {!!lastScanCounts && !scanErrorMsg && (
-                          <Text style={styles.asHeroStatsText} numberOfLines={1}>
-                            Last scan: {lastScanCounts.audio} audio, {lastScanCounts.video} video
-                          </Text>
-                        )}
-                        {!scanDenied && !scanErrorMsg && !lastScanCounts && (
-                          <Text style={styles.asHeroStatsText} numberOfLines={1}>Scan your device for local audio files</Text>
-                        )}
-                      </View>
-                      <TouchableOpacity style={styles.asHeroRescanBtn} onPress={runScan} disabled={scanning}>
-                        <Text style={styles.asHeroRescanText}>{scanning ? "Scanning..." : "Rescan"}</Text>
-                      </TouchableOpacity>
-                    </View>
+                  <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        if (filteredAllSongs.length > 0 && onTrackPress) onTrackPress(filteredAllSongs[0], filteredAllSongs);
+                      }}
+                      style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: LIB_ORCHID, borderRadius: 22, paddingVertical: 11 }}
+                    >
+                      <Ionicons name="play" size={16} color="#0B0A0F" />
+                      <Text style={{ color: "#0B0A0F", fontWeight: "800", fontSize: 14 }}>Play</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        if (filteredAllSongs.length === 0 || !onTrackPress) return;
+                        const q = [...filteredAllSongs];
+                        for (let i = q.length - 1; i > 0; i--) {
+                          const j = Math.floor(Math.random() * (i + 1));
+                          [q[i], q[j]] = [q[j], q[i]];
+                        }
+                        onTrackPress(q[0], q);
+                      }}
+                      style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "rgba(255,255,255,0.12)", borderRadius: 22, paddingVertical: 11, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)" }}
+                    >
+                      <Ionicons name="shuffle" size={16} color="#F5F3FA" />
+                      <Text style={{ color: "#F5F3FA", fontWeight: "700", fontSize: 14 }}>Shuffle</Text>
+                    </TouchableOpacity>
                   </View>
 
                   <View style={styles.asSectionRow}>
                     <Text style={styles.asSectionLabel}>TRACKS ({allSongs.length})</Text>
-                    <View style={styles.asSortRow}>
-                      <Text style={styles.asSortText}>Recently Added</Text>
+                    <TouchableOpacity
+                      style={styles.asSortRow}
+                      onPress={() => setSortSheetOpen(true)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <Text style={styles.asSortText}>{SORT_LABELS[allSortMode]}</Text>
                       <Ionicons name="options-outline" size={14} color={AS_AMBER} />
-                    </View>
+                    </TouchableOpacity>
                   </View>
                 </>
               }
@@ -1545,6 +1687,17 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
               ListHeaderComponent={
                 <>
+                  <TouchableOpacity
+                    style={[styles.pl2NewPlaylistCard, { marginBottom: 10 }]}
+                    onPress={onMostPlayedPress}
+                    activeOpacity={0.75}
+                  >
+                    <View style={styles.pl2NewPlaylistIconWrap}>
+                      <Ionicons name="flame" size={18} color="#0A0A0A" />
+                    </View>
+                    <Text style={styles.pl2NewPlaylistText}>Most Played</Text>
+                    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.4)" />
+                  </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.pl2NewPlaylistCard}
                     onPress={openCreatePlaylistChoice}
@@ -1662,9 +1815,11 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
           {activeTab === "Artists" && (
             <FlatList
+              key="artist-grid-3col"
               data={artistEntries}
               keyExtractor={([artist]) => artist}
-              contentContainerStyle={styles.listContent}
+              numColumns={3}
+              contentContainerStyle={[styles.listContent, { paddingBottom: 180 }]}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
               ListEmptyComponent={<Text style={styles.emptyText}>No artists yet — download some tracks first.</Text>}
               initialNumToRender={12}
@@ -1672,15 +1827,27 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
               windowSize={7}
               removeClippedSubviews
               renderItem={({ item: [artist, tracks] }) => (
-                <TouchableOpacity style={styles.folderRow} onPress={() => setSelectedArtist(artist)}>
-                  <Text style={styles.folderName}>{artist}</Text>
-                  <Text style={styles.folderCount}>{tracks.length} tracks</Text>
-                </TouchableOpacity>
+                <LibraryArtistRow
+                  artist={artist}
+                  tracks={tracks}
+                  onPress={() => setSelectedArtist(artist)}
+                />
               )}
             />
           )}
         </>
       )}
+
+      <AllSongsSortSheet
+        visible={sortSheetOpen}
+        current={allSortMode}
+        onClose={() => setSortSheetOpen(false)}
+        onPick={(m) => {
+          setAllSortMode(m);
+          saveAllSongsSort(m);
+          setSortSheetOpen(false);
+        }}
+      />
 
       <ContextMenuCard
         visible={menuVisible}

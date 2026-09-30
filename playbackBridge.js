@@ -10,6 +10,7 @@ import { MediaControl, PlaybackState, Command } from "expo-media-control";
 let controls = {
   toggle: () => {},
   next: () => {},
+  playTrack: () => {},
   prev: () => {},
   getState: () => ({ isPlaying: false, track: null, position: 0, duration: 0 }),
 };
@@ -101,4 +102,8 @@ export async function initMediaControls() {
   } catch (err) {
     console.warn("Failed to enable media controls:", err);
   }
+}
+
+export function playTrackFromVoice(track, queue) {
+  controls.playTrack(track, queue);
 }

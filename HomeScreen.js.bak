@@ -19,7 +19,6 @@ import { PlaylistsRow, SimilarRow, RecentlyAddedRow, PodcastsRow } from "./HomeD
 import TrendingRow from "./HomeTrendingRow";
 import HeroCard, { buildHeroSlides } from "./HomeHeroCard";
 import useHeroMix from "./useHeroMix";
-import useAnnouncementSlide from "./useAnnouncementSlide";
 import AnalogClock from "./AnalogClock";
 import MoviesRow from "./MoviesRow";
 import HomeBackground from "./HomeBackground";
@@ -89,7 +88,6 @@ export default function HomeScreen({
   const [loadingMore, setLoadingMore] = useState(false);
   const [displayName, setDisplayName] = useState(null);
   const mixSlide = useHeroMix(onTrackPress);
-  const annSlide = useAnnouncementSlide();
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [unseenShareCount, setUnseenShareCount] = useState(0);
 
@@ -295,7 +293,7 @@ export default function HomeScreen({
 
         {/* ---------- Hero card: swipeable featured slides ---------- */}
         {!loading && !error && (
-          <HeroCard slides={[...(annSlide ? [annSlide] : []), ...buildHeroSlides(tracks, onTrackPress), ...(mixSlide ? [mixSlide] : [])]} />
+          <HeroCard slides={[...buildHeroSlides(tracks, onTrackPress), ...(mixSlide ? [mixSlide] : [])]} />
         )}
 
         {/* ---------- Action tiles: Paste Link / Downloads / AI Music ---------- */}

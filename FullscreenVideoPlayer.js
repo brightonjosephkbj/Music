@@ -1,118 +1,59 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Animated,
-  PanResponder,
-  StatusBar,
-  Modal,
-  useWindowDimensions,
+  View, Text, Image, StyleSheet, TouchableOpacity, Animated, PanResponder,
+  StatusBar, Modal, ActivityIndicator, useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { VideoView } from "expo-video";
 import * as ScreenOrientation from "expo-screen-orientation";
 
-const ACCENT = "#B2D5E5";
-const SWIPE_THRESHOLD = 60;
-const TAP_THRESHOLD = 10;
-const DOUBLE_TAP_DELAY = 280;
-const CONTROLS_TIMEOUT = 600000;
+const ACCENT = "#FF6B6B";
+const PLAY_BG = "#FFFFFF"; // play/pause button fill
+const PLAY_FG = "#101010"; // play/pause icon
 const SEEK_AMOUNT = 10;
+const HIDE_AFTER = 4000;
+const DOUBLE_TAP = 280;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
-function formatTime(sec) {
-  if (!sec && sec !== 0) return "0:00";
-  sec = Math.max(0, sec);
+function fmt(sec) {
+  sec = Math.max(0, sec || 0);
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60).toString().padStart(2, "0");
-  if (h > 0) return `${h}:${m.toString().padStart(2, "0")}:${s}`;
-  return `${m}:${s}`;
+  return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 
-// Pure-JS gradient (no native module): stacked strips with fading alpha.
-function Fade({ position, height, peak }) {
-  const N = 12;
-  const strips = [];
-  for (let i = 0; i < N; i++) {
-    const t = position === "top" ? 1 - i / N : i / N;
-    const alpha = peak * Math.pow(t, 1.6);
-    strips.push(
-      <View
-        key={i}
-        style={{ flex: 1, backgroundColor: `rgba(0,0,0,${alpha.toFixed(3)})` }}
-      />
-    );
-  }
-  return (
-    <View
-      pointerEvents="none"
-      style={{
-        position: "absolute",
-        left: 0,
-        right: 0,
-        height,
-        [position]: 0,
-      }}
-    >
-      {strips}
-    </View>
-  );
-}
-
-function PlayerInner({
-  track,
-  engine,
-  onClose,
-  onNext,
-  onPrev,
-}) {
+function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
-  const [chromeVisible, setChromeVisible] = useState(true);
+  const [visible, setVisible] = useState(true);
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubPct, setScrubPct] = useState(0);
   const [muted, setMuted] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [speedMenuVisible, setSpeedMenuVisible] = useState(false);
-  const [seekFeedback, setSeekFeedback] = useState(null);
-  const [remaining, setRemaining] = useState(false);
+  const [speedOpen, setSpeedOpen] = useState(false);
+  const [seekFb, setSeekFb] = useState(null);
 
-  const playScale = useRef(new Animated.Value(1)).current;
-  const controlsOpacity = useRef(new Animated.Value(1)).current;
-  const feedbackOpacity = useRef(new Animated.Value(0)).current;
-  const feedbackScale = useRef(new Animated.Value(0.7)).current;
-
-  const controlsTimer = useRef(null);
-  const feedbackTimer = useRef(null);
+  const opacity = useRef(new Animated.Value(1)).current;
+  const hideTimer = useRef(null);
+  const fbTimer = useRef(null);
   const tapTimer = useRef(null);
-  const lastTapRef = useRef(0);
+  const lastTap = useRef(0);
+  const trackW = useRef(0);
+  const startX = useRef(0);
+  const pctRef = useRef(0);
 
-  // Always-current values for the PanResponders / timers (created once).
   const L = useRef({});
-  L.current = {
-    engine,
-    chromeVisible,
-    scrubbing,
-    speedMenuVisible,
-    onClose,
-    onNext,
-    onPrev,
-    width,
-  };
+  L.current = { engine, visible, scrubbing, speedOpen, onClose, onNext, onPrev, width };
 
-  // ---------------- ORIENTATION ----------------
+  // ---------- orientation ----------
   useEffect(() => {
     StatusBar.setHidden(true);
     ScreenOrientation.unlockAsync().catch(() => {});
     return () => {
       StatusBar.setHidden(false);
-      ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT_UP
-      ).catch(() => {});
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
     };
   }, []);
 
@@ -123,82 +64,65 @@ function PlayerInner({
           ? ScreenOrientation.OrientationLock.PORTRAIT_UP
           : ScreenOrientation.OrientationLock.LANDSCAPE
       );
-    } catch (e) {
-      console.log("Orientation error:", e);
-    }
+    } catch {}
     showControls();
   };
 
-  // ---------------- AUTO HIDE CONTROLS ----------------
+  // ---------- show / hide controls ----------
   const hideControls = useCallback(() => {
-    Animated.timing(controlsOpacity, {
-      toValue: 0,
-      duration: 250,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setChromeVisible(false);
-    });
-  }, [controlsOpacity]);
+    Animated.timing(opacity, { toValue: 0, duration: 250, useNativeDriver: true })
+      .start(({ finished }) => { if (finished) setVisible(false); });
+  }, [opacity]);
 
   const showControls = useCallback(() => {
-    if (controlsTimer.current) clearTimeout(controlsTimer.current);
-    setChromeVisible(true);
-    Animated.timing(controlsOpacity, {
-      toValue: 1,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-    controlsTimer.current = setTimeout(() => {
-      if (!L.current.scrubbing && !L.current.speedMenuVisible) {
-        hideControls();
-      }
-    }, CONTROLS_TIMEOUT);
-  }, [controlsOpacity, hideControls]);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    setVisible(true);
+    Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+    hideTimer.current = setTimeout(() => {
+      if (!L.current.scrubbing && !L.current.speedOpen) hideControls();
+    }, HIDE_AFTER);
+  }, [opacity, hideControls]);
 
   useEffect(() => {
     showControls();
     return () => {
-      if (controlsTimer.current) clearTimeout(controlsTimer.current);
-      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
-      if (tapTimer.current) clearTimeout(tapTimer.current);
+      [hideTimer, fbTimer, tapTimer].forEach((t) => t.current && clearTimeout(t.current));
     };
   }, [track?.id]);
 
-  // ---------------- SEEK BAR ----------------
-  const trackRef = useRef(null);
-  const trackPageXRef = useRef(0);
-  const trackWidthRef = useRef(0);
-  const scrubPctRef = useRef(0);
+  // ---------- seek ----------
+  const seekRelative = useCallback((amount) => {
+    const eng = L.current.engine;
+    if (!eng) return;
+    const dur = eng.duration || 0;
+    eng.seekTo(Math.max(0, Math.min(dur, (eng.position || 0) + amount)));
+    setSeekFb(amount > 0 ? `+${amount}s` : `${amount}s`);
+    if (fbTimer.current) clearTimeout(fbTimer.current);
+    fbTimer.current = setTimeout(() => setSeekFb(null), 700);
+    showControls();
+  }, [showControls]);
 
-  const measureTrack = () => {
-    if (!trackRef.current) return;
-    trackRef.current.measure((x, y, w, h, pageX) => {
-      trackPageXRef.current = pageX;
-      trackWidthRef.current = w;
-    });
-  };
-
-  const updateScrubFromAbsoluteX = (absX) => {
-    const w = trackWidthRef.current;
-    if (!w) return;
-    const pct = Math.max(0, Math.min(1, (absX - trackPageXRef.current) / w));
-    scrubPctRef.current = pct;
-    setScrubPct(pct);
-  };
-
-  const seekPanResponder = useRef(
+  const seekPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (_, g) => {
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (e) => {
         showControls();
         setScrubbing(true);
-        updateScrubFromAbsoluteX(g.x0);
+        startX.current = e.nativeEvent.locationX;
+        const w = trackW.current || 1;
+        pctRef.current = Math.max(0, Math.min(1, startX.current / w));
+        setScrubPct(pctRef.current);
       },
-      onPanResponderMove: (_, g) => updateScrubFromAbsoluteX(g.moveX),
+      onPanResponderMove: (_, g) => {
+        const w = trackW.current || 1;
+        pctRef.current = Math.max(0, Math.min(1, (startX.current + g.dx) / w));
+        setScrubPct(pctRef.current);
+      },
       onPanResponderRelease: () => {
         const eng = L.current.engine;
-        eng?.seekTo(scrubPctRef.current * (eng?.duration || 0));
+        eng?.seekTo(pctRef.current * (eng?.duration || 0));
         setScrubbing(false);
         showControls();
       },
@@ -206,181 +130,93 @@ function PlayerInner({
     })
   ).current;
 
-  // ---------------- SEEK RELATIVE ----------------
-  const seekRelative = useCallback(
-    (amount) => {
-      const eng = L.current.engine;
-      if (!eng) return;
-      const duration = eng.duration || 0;
-      const target = Math.max(
-        0,
-        Math.min(duration, (eng.position || 0) + amount)
-      );
-      eng.seekTo(target);
-
-      setSeekFeedback(amount > 0 ? `+${amount}` : `${amount}`);
-      Animated.parallel([
-        Animated.timing(feedbackOpacity, {
-          toValue: 1,
-          duration: 120,
-          useNativeDriver: true,
-        }),
-        Animated.spring(feedbackScale, {
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
-      feedbackTimer.current = setTimeout(() => {
-        Animated.parallel([
-          Animated.timing(feedbackOpacity, {
-            toValue: 0,
-            duration: 250,
-            useNativeDriver: true,
-          }),
-          Animated.timing(feedbackScale, {
-            toValue: 0.7,
-            duration: 250,
-            useNativeDriver: true,
-          }),
-        ]).start();
-      }, 600);
-
-      showControls();
-    },
-    [feedbackOpacity, feedbackScale, showControls]
-  );
-
-  // ---------------- VIDEO GESTURES ----------------
-  const videoPanResponder = useRef(
+  // ---------- video gestures ----------
+  const videoPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, g) =>
-        Math.abs(g.dx) > 8 || Math.abs(g.dy) > 8,
-      onPanResponderRelease: (_, g) => {
-        const absDx = Math.abs(g.dx);
-        const absDy = Math.abs(g.dy);
-
-        // TAP
-        if (absDx < TAP_THRESHOLD && absDy < TAP_THRESHOLD) {
+      onPanResponderRelease: (e, g) => {
+        const adx = Math.abs(g.dx);
+        const ady = Math.abs(g.dy);
+        if (adx < 10 && ady < 10) {
           const now = Date.now();
-          if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
-            lastTapRef.current = 0;
+          if (now - lastTap.current < DOUBLE_TAP) {
+            lastTap.current = 0;
             if (tapTimer.current) clearTimeout(tapTimer.current);
-            if (g.x0 < L.current.width / 2) seekRelative(-SEEK_AMOUNT);
-            else seekRelative(SEEK_AMOUNT);
+            seekRelative(g.x0 < L.current.width / 2 ? -SEEK_AMOUNT : SEEK_AMOUNT);
             return;
           }
-          lastTapRef.current = now;
+          lastTap.current = now;
           tapTimer.current = setTimeout(() => {
-            if (Date.now() - lastTapRef.current >= DOUBLE_TAP_DELAY) {
-              if (L.current.chromeVisible) hideControls();
-              else showControls();
-            }
-          }, DOUBLE_TAP_DELAY);
+            if (L.current.visible) hideControls();
+            else showControls();
+          }, DOUBLE_TAP);
           return;
         }
-
-        // SWIPE DOWN
-        if (absDy > absDx && g.dy > SWIPE_THRESHOLD) {
-          L.current.onClose && L.current.onClose();
-          return;
-        }
-
-        // SWIPE LEFT / RIGHT
-        if (absDx > absDy) {
-          if (g.dx < -SWIPE_THRESHOLD) {
-            L.current.onNext && L.current.onNext();
-            showControls();
-          } else if (g.dx > SWIPE_THRESHOLD) {
-            L.current.onPrev && L.current.onPrev();
-            showControls();
-          }
+        if (ady > adx && g.dy > 60) { L.current.onClose && L.current.onClose(); return; }
+        if (adx > ady) {
+          if (g.dx < -60) { L.current.onNext && L.current.onNext(); showControls(); }
+          else if (g.dx > 60) { L.current.onPrev && L.current.onPrev(); showControls(); }
         }
       },
     })
   ).current;
 
-  // ---------------- PLAY / PAUSE ----------------
-  const onPlayPausePress = () => {
-    Animated.sequence([
-      Animated.timing(playScale, {
-        toValue: 0.82,
-        duration: 90,
-        useNativeDriver: true,
-      }),
-      Animated.spring(playScale, {
-        toValue: 1,
-        useNativeDriver: true,
-        bounciness: 10,
-      }),
-    ]).start();
-    engine?.toggle();
-    showControls();
-  };
-
-  // ---------------- MUTE ----------------
+  // ---------- mute / speed ----------
   const toggleMute = () => {
     const next = !muted;
     setMuted(next);
-    if (typeof engine?.setVolume === "function") {
-      engine.setVolume(next ? 0 : 1);
-    } else if (engine?.videoPlayer) {
-      try {
-        engine.videoPlayer.muted = next;
-      } catch (e) {}
-    }
+    try { if (engine?.videoPlayer) engine.videoPlayer.muted = next; } catch {}
     showControls();
   };
 
-  // ---------------- SPEED ----------------
   const changeSpeed = (v) => {
     setSpeed(v);
-    if (typeof engine?.setPlaybackRate === "function") {
-      engine.setPlaybackRate(v);
-    } else if (engine?.videoPlayer) {
-      try {
-        engine.videoPlayer.playbackRate = v;
-      } catch (e) {}
-    }
-    setSpeedMenuVisible(false);
+    if (typeof engine?.setRate === "function") engine.setRate(v);
+    else { try { if (engine?.videoPlayer) engine.videoPlayer.playbackRate = v; } catch {} }
+    setSpeedOpen(false);
     showControls();
   };
 
-  // ---------------- AUTO NEXT ----------------
-  const hasAdvancedRef = useRef(false);
+  // ---------- auto next ----------
+  const advanced = useRef(false);
+  useEffect(() => { advanced.current = false; }, [track?.id]);
   useEffect(() => {
-    hasAdvancedRef.current = false;
-  }, [track?.id]);
-
-  useEffect(() => {
-    if (!engine?.duration || hasAdvancedRef.current) return;
-    if (engine.position >= engine.duration - 0.5) {
-      hasAdvancedRef.current = true;
+    if (!engine?.duration || advanced.current) return;
+    if (engine.position > 1 && engine.position >= engine.duration - 0.5) {
+      advanced.current = true;
       onNext && onNext();
     }
   }, [engine?.position, engine?.duration]);
 
-  // ---------------- CALCULATIONS ----------------
-  if (!engine?.videoPlayer) return null;
+  // ---------- loading state ----------
+  if (!engine?.videoPlayer || track?.pending) {
+    return (
+      <View style={st.loadingRoot}>
+        <StatusBar hidden />
+        {!!track?.artwork && (
+          <Image source={{ uri: track.artwork }} style={[StyleSheet.absoluteFill, { opacity: 0.25 }]} blurRadius={20} />
+        )}
+        <ActivityIndicator size="large" color={ACCENT} />
+        <Text style={st.loadTitle} numberOfLines={2}>{track?.title || "Loading video"}</Text>
+        <Text style={st.loadSub}>Getting your video ready...</Text>
+        <TouchableOpacity onPress={onClose} style={st.loadBack}>
+          <Ionicons name="chevron-back" size={24} color="#fff" />
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
-  const duration = engine?.duration || 0;
-  const progressPct = scrubbing
-    ? scrubPct
-    : duration
-    ? Math.min(1, (engine.position || 0) / duration)
-    : 0;
-  const displayedPosition = scrubbing ? scrubPct * duration : engine?.position || 0;
-  const timeLeft = Math.max(0, duration - displayedPosition);
+  const duration = engine.duration || 0;
+  const pct = scrubbing ? scrubPct : duration ? Math.min(1, (engine.position || 0) / duration) : 0;
+  const shownPos = scrubbing ? scrubPct * duration : engine.position || 0;
+  const pad = isLandscape ? { paddingTop: 14, paddingBottom: 14, paddingHorizontal: 36 }
+                          : { paddingTop: 40, paddingBottom: 30, paddingHorizontal: 18 };
 
-  // ---------------- UI ----------------
   return (
-    <View style={[styles.root, { width, height, backgroundColor: "#000" }]}>{/* SIZED_ROOT */}
+    <View style={st.root}>
       <StatusBar hidden />
 
-      {/* VIDEO */}
-      <View style={StyleSheet.absoluteFill} {...videoPanResponder.panHandlers}>
+      <View style={StyleSheet.absoluteFill} {...videoPan.panHandlers}>
         <VideoView
           player={engine.videoPlayer}
           style={StyleSheet.absoluteFill}
@@ -390,412 +226,174 @@ function PlayerInner({
         />
       </View>
 
-      {/* DOUBLE TAP FEEDBACK */}
-      {seekFeedback && (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.seekFeedback,
-            {
-              opacity: feedbackOpacity,
-              transform: [{ scale: feedbackScale }],
-            },
-          ]}
-        >
-          <Ionicons
-            name={seekFeedback.startsWith("+") ? "play-forward" : "play-back"}
-            size={25}
-            color="#fff"
-          />
-          <Text style={styles.seekFeedbackText}>{seekFeedback}s</Text>
-        </Animated.View>
-      )}
-
-      {/* BUFFERING */}
       {engine.isBuffering && (
-        <View style={styles.bufferingWrap} pointerEvents="none">
-          <Ionicons name="ellipsis-horizontal" size={22} color="#fff" />
+        <View style={st.centerAbs} pointerEvents="none">
+          <ActivityIndicator size="large" color="#fff" />
         </View>
       )}
 
-      {/* SPEED MENU */}
-      {speedMenuVisible && (
-        <View style={styles.speedMenu}>
-          <Text style={styles.speedMenuTitle}>Playback speed</Text>
-          {SPEEDS.map((item) => (
+      {!!seekFb && (
+        <View style={st.centerAbs} pointerEvents="none">
+          <Text style={st.seekFb}>{seekFb}</Text>
+        </View>
+      )}
+
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { opacity }]}
+        pointerEvents={visible ? "box-none" : "none"}
+      >
+        <View style={[st.overlay, pad]} pointerEvents="box-none">
+          {/* TOP */}
+          <View style={st.topRow}>
+            <TouchableOpacity onPress={onClose} style={st.circleBtn}>
+              <Ionicons name="chevron-back" size={24} color="#fff" />
+            </TouchableOpacity>
+            <View style={st.titlePill}>
+              <Text style={st.title} numberOfLines={1}>{track?.title || "Unknown title"}</Text>
+              <Text style={st.artist} numberOfLines={1}>{track?.artist || ""}</Text>
+            </View>
             <TouchableOpacity
-              key={item}
-              onPress={() => changeSpeed(item)}
-              style={[styles.speedItem, speed === item && styles.speedItemActive]}
+              onPress={() => { setSpeedOpen((v) => !v); showControls(); }}
+              style={[st.circleBtn, { width: 56, borderRadius: 22 }]}
             >
-              <Text
-                style={[styles.speedText, speed === item && styles.speedTextActive]}
-              >
-                {item}x
-              </Text>
-              {speed === item && (
-                <Ionicons name="checkmark" size={18} color={ACCENT} />
-              )}
+              <Text style={st.speedTxt}>{speed}x</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* CENTER */}
+          <View style={st.centerRow} pointerEvents="box-none">
+            <TouchableOpacity onPress={() => { onPrev && onPrev(); showControls(); }} style={st.sideBtn}>
+              <Ionicons name="play-skip-back" size={28} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => seekRelative(-SEEK_AMOUNT)} style={st.sideBtn}>
+              <Ionicons name="play-back" size={24} color="#fff" />
+              <Text style={st.skipNum}>10</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { engine.toggle(); showControls(); }}
+              style={st.playBtn}
+              activeOpacity={0.85}
+            >
+              <Ionicons name={engine.isPlaying ? "pause" : "play"} size={36} color={PLAY_FG} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => seekRelative(SEEK_AMOUNT)} style={st.sideBtn}>
+              <Ionicons name="play-forward" size={24} color="#fff" />
+              <Text style={st.skipNum}>10</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { onNext && onNext(); showControls(); }} style={st.sideBtn}>
+              <Ionicons name="play-skip-forward" size={28} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          {/* BOTTOM */}
+          <View style={st.bottomPanel}>
+            <TouchableOpacity onPress={toggleMute} style={st.extraBtn}>
+              <Ionicons name={muted ? "volume-mute" : "volume-high"} size={18} color="#fff" />
+            </TouchableOpacity>
+            <Text style={[st.time, { marginLeft: 8 }]}>{fmt(shownPos)}</Text>
+            <View
+              style={st.seekHit}
+              onLayout={(e) => { trackW.current = e.nativeEvent.layout.width; }}
+              {...seekPan.panHandlers}
+            >
+              <View style={st.seekTrack} pointerEvents="none">
+                <View style={[st.seekFill, { width: `${pct * 100}%` }]} />
+              </View>
+              <View
+                pointerEvents="none"
+                style={[st.seekDot, { left: `${pct * 100}%`, transform: [{ scale: scrubbing ? 1.4 : 1 }] }]}
+              />
+            </View>
+            <Text style={st.time}>{fmt(duration)}</Text>
+            <TouchableOpacity onPress={toggleOrientation} style={[st.extraBtn, { marginLeft: 8 }]}>
+              <Ionicons name={isLandscape ? "contract" : "expand"} size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Animated.View>
+
+      {speedOpen && (
+        <View style={[st.speedMenu, { top: isLandscape ? 70 : 96 }]}>
+          {SPEEDS.map((v) => (
+            <TouchableOpacity key={v} onPress={() => changeSpeed(v)} style={st.speedItem}>
+              <Text style={[st.speedItemTxt, speed === v && { color: ACCENT, fontWeight: "800" }]}>{v}x</Text>
+              {speed === v && <Ionicons name="checkmark" size={18} color={ACCENT} />}
             </TouchableOpacity>
           ))}
         </View>
-      )}
-
-      {/* CONTROLS */}
-      {(
-        <Animated.View
-          style={[styles.chrome, { opacity: controlsOpacity, zIndex: 10, elevation: 10 }]}
-          pointerEvents={chromeVisible ? "box-none" : "none"}
-        >
-          <Fade position="top" height={190} peak={0.82} />
-
-          {/* TOP BAR */}
-          <View
-            style={[styles.topBar, isLandscape && styles.landscapeTopBar]}
-            pointerEvents="box-none"
-          >
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.circleButton}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="chevron-back" size={25} color="#fff" />
-            </TouchableOpacity>
-
-            <View style={styles.titlePill}>
-              <Text style={styles.topBarTitle} numberOfLines={1}>
-                {track?.title || "Unknown title"}
-              </Text>
-              <Text style={styles.topBarArtist} numberOfLines={1}>
-                {track?.artist || "Unknown artist"}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => {
-                setSpeedMenuVisible((v) => !v);
-                showControls();
-              }}
-              style={styles.smallButton}
-            >
-              <Text style={styles.speedButtonText}>{speed}x</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Fade position="bottom" height={330} peak={0.92} />
-
-          {/* BOTTOM */}
-          <View
-            style={[styles.bottomBar, isLandscape && styles.landscapeBottomBar]}
-            pointerEvents="box-none"
-          >
-            {/* SEEK BAR */}
-            <View style={styles.progressRow}>
-              <View
-                ref={trackRef}
-                style={[styles.progressTrack, scrubbing && styles.progressTrackActive]}
-                onLayout={measureTrack}
-                {...seekPanResponder.panHandlers}
-                hitSlop={{ top: 18, bottom: 18 }}
-              >
-                <View
-                  style={[styles.progressFill, { width: `${progressPct * 100}%` }]}
-                />
-                <View
-                  style={[
-                    styles.progressDot,
-                    {
-                      left: `${progressPct * 100}%`,
-                      transform: [{ scale: scrubbing ? 1.35 : 1 }],
-                    },
-                  ]}
-                />
-              </View>
-
-              <View style={styles.timeRow}>
-                <Text style={styles.timeText}>{formatTime(displayedPosition)}</Text>
-                <TouchableOpacity onPress={() => setRemaining((v) => !v)}>
-                  <Text style={styles.timeText}>
-                    {remaining ? `-${formatTime(timeLeft)}` : formatTime(duration)}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* MAIN CONTROLS */}
-            <View style={styles.controlsRow}>
-              <TouchableOpacity
-                onPress={() => {
-                  onPrev && onPrev();
-                  showControls();
-                }}
-                style={styles.transportButton}
-              >
-                <Ionicons name="play-skip-back" size={28} color="#fff" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => seekRelative(-SEEK_AMOUNT)}
-                style={styles.skipButton}
-              >
-                <Ionicons name="play-back" size={19} color="#fff" />
-                <Text style={styles.skipText}>10</Text>
-              </TouchableOpacity>
-
-              <Animated.View style={{ transform: [{ scale: playScale }] }}>
-                <TouchableOpacity
-                  onPress={onPlayPausePress}
-                  style={styles.playButton}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons
-                    name={engine?.isPlaying ? "pause" : "play"}
-                    size={30}
-                    color="#101010"
-                    style={engine?.isPlaying ? undefined : { marginLeft: 3 }}
-                  />
-                </TouchableOpacity>
-              </Animated.View>
-
-              <TouchableOpacity
-                onPress={() => seekRelative(SEEK_AMOUNT)}
-                style={styles.skipButton}
-              >
-                <Ionicons name="play-forward" size={19} color="#fff" />
-                <Text style={styles.skipText}>10</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => {
-                  onNext && onNext();
-                  showControls();
-                }}
-                style={styles.transportButton}
-              >
-                <Ionicons name="play-skip-forward" size={28} color="#fff" />
-              </TouchableOpacity>
-            </View>
-
-            {/* EXTRA CONTROLS */}
-            <View style={styles.extraControls}>
-              <TouchableOpacity onPress={toggleMute} style={styles.extraButton}>
-                <Ionicons
-                  name={muted ? "volume-mute" : "volume-high"}
-                  size={21}
-                  color="#fff"
-                />
-              </TouchableOpacity>
-
-              <View style={styles.extraSpacer} />
-
-              <TouchableOpacity
-                onPress={toggleOrientation}
-                style={styles.extraButton}
-              >
-                <Ionicons
-                  name={isLandscape ? "contract" : "expand"}
-                  size={21}
-                  color="#fff"
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Animated.View>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root: { ...StyleSheet.absoluteFillObject, backgroundColor: "#000" },
-  chrome: { ...StyleSheet.absoluteFillObject },
+const GLASS = "rgba(20,20,25,0.6)";
+const BORDER = "rgba(255,255,255,0.18)";
 
-  topBar: {
-    position: "absolute",
-    top: 42,
-    left: 18,
-    right: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+const st = StyleSheet.create({
+  root: { flex: 1, backgroundColor: "#000" },
+  loadingRoot: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center", paddingHorizontal: 32 },
+  loadTitle: { color: "#fff", fontSize: 16, fontWeight: "700", marginTop: 20, textAlign: "center" },
+  loadSub: { color: "rgba(255,255,255,0.6)", fontSize: 13, marginTop: 6 },
+  loadBack: {
+    position: "absolute", top: 40, left: 18, width: 44, height: 44, borderRadius: 22,
+    backgroundColor: GLASS, borderWidth: 1, borderColor: BORDER, alignItems: "center", justifyContent: "center",
   },
-  landscapeTopBar: { top: 20, left: 28, right: 28 },
-
-  circleButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(20,20,20,0.58)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+  overlay: { flex: 1, justifyContent: "space-between" },
+  topRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  circleBtn: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: GLASS,
+    borderWidth: 1, borderColor: BORDER, alignItems: "center", justifyContent: "center",
   },
   titlePill: {
-    flex: 1,
-    paddingHorizontal: 17,
-    paddingVertical: 9,
-    borderRadius: 18,
-    backgroundColor: "rgba(20,20,20,0.58)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
-    alignItems: "center",
+    flex: 1, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18,
+    backgroundColor: GLASS, borderWidth: 1, borderColor: BORDER, alignItems: "center",
   },
-  topBarTitle: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  topBarArtist: { color: "rgba(255,255,255,0.58)", fontSize: 11, marginTop: 2 },
-  smallButton: {
-    minWidth: 48,
-    height: 44,
-    paddingHorizontal: 10,
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(20,20,20,0.58)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+  title: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  artist: { color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 2 },
+  speedTxt: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  centerRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 14 },
+  sideBtn: {
+    width: 50, height: 50, borderRadius: 25, backgroundColor: GLASS,
+    alignItems: "center", justifyContent: "center",
   },
-  speedButtonText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-
-  bufferingWrap: {
-    position: "absolute",
-    top: "50%",
-    left: "50%",
-    marginLeft: -25,
-    marginTop: -25,
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "rgba(0,0,0,0.65)",
-    justifyContent: "center",
-    alignItems: "center",
+  skipNum: { position: "absolute", color: "#fff", fontSize: 8, fontWeight: "800", marginTop: 1 },
+  playBtn: {
+    width: 76, height: 76, borderRadius: 38, backgroundColor: PLAY_BG,
+    alignItems: "center", justifyContent: "center", elevation: 8,
   },
-
-  seekFeedback: {
-    position: "absolute",
-    top: "45%",
-    left: "50%",
-    marginLeft: -45,
-    width: 90,
-    alignItems: "center",
-    justifyContent: "center",
+  bottomPanel: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: GLASS, borderWidth: 1, borderColor: BORDER,
+    borderRadius: 22, paddingHorizontal: 10, paddingVertical: 6,
   },
-  seekFeedbackText: { color: "#fff", fontSize: 13, fontWeight: "700", marginTop: 4 },
-
+  seekHit: { flex: 1, height: 28, justifyContent: "center", marginHorizontal: 8 },
+  seekTrack: { height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.28)", overflow: "hidden" },
+  seekFill: { height: "100%", backgroundColor: ACCENT },
+  seekDot: {
+    position: "absolute", top: 8, width: 12, height: 12, borderRadius: 6,
+    marginLeft: -6, backgroundColor: ACCENT,
+  },
+  timeRow: { flexDirection: "row", justifyContent: "space-between" },
+  time: { color: "rgba(255,255,255,0.75)", fontSize: 11, fontWeight: "600" },
+  extraRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
+  extraBtn: {
+    width: 34, height: 34, borderRadius: 17, backgroundColor: "rgba(255,255,255,0.1)",
+    alignItems: "center", justifyContent: "center",
+  },
+  centerAbs: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
+  seekFb: {
+    color: "#fff", fontSize: 18, fontWeight: "800", backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16, overflow: "hidden",
+  },
   speedMenu: {
-    position: "absolute",
-    right: 18,
-    top: 95,
-    width: 170,
-    paddingVertical: 8,
-    borderRadius: 18,
-    backgroundColor: "rgba(20,20,20,0.94)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    zIndex: 20,
-    elevation: 15,
-  },
-  speedMenuTitle: {
-    color: "rgba(255,255,255,0.55)",
-    fontSize: 11,
-    fontWeight: "600",
-    paddingHorizontal: 16,
-    paddingVertical: 9,
+    position: "absolute", right: 18, width: 160, paddingVertical: 6, borderRadius: 18,
+    backgroundColor: "rgba(20,20,25,0.95)", borderWidth: 1, borderColor: BORDER, elevation: 20, zIndex: 20,
   },
   speedItem: {
-    height: 42,
-    paddingHorizontal: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    height: 42, paddingHorizontal: 16, flexDirection: "row",
+    alignItems: "center", justifyContent: "space-between",
   },
-  speedItemActive: { backgroundColor: "rgba(178,213,229,0.10)" },
-  speedText: { color: "#fff", fontSize: 13 },
-  speedTextActive: { color: ACCENT, fontWeight: "700" },
-
-  bottomBar: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 25,
-    paddingHorizontal: 22,
-  },
-  landscapeBottomBar: { bottom: 18, paddingHorizontal: 45 },
-
-  progressRow: { marginBottom: 20 },
-  progressTrack: {
-    height: 3,
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.27)",
-    justifyContent: "center",
-  },
-  progressTrackActive: { height: 6 },
-  progressFill: { height: "100%", borderRadius: 3, backgroundColor: ACCENT },
-  progressDot: {
-    position: "absolute",
-    top: -4.5,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginLeft: -6,
-    backgroundColor: ACCENT,
-  },
-  timeRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 9,
-  },
-  timeText: { color: "rgba(255,255,255,0.65)", fontSize: 11, fontWeight: "500" },
-
-  controlsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 25,
-  },
-  transportButton: {
-    width: 44,
-    height: 44,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  skipButton: {
-    width: 45,
-    height: 45,
-    justifyContent: "center",
-    alignItems: "center",
-    position: "relative",
-  },
-  skipText: {
-    position: "absolute",
-    color: "#fff",
-    fontSize: 8,
-    fontWeight: "800",
-    marginTop: 1,
-  },
-  playButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: ACCENT,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.35,
-    shadowRadius: 15,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 10,
-  },
-
-  extraControls: { marginTop: 14, flexDirection: "row", alignItems: "center" },
-  extraButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-  extraSpacer: { flex: 1 },
+  speedItemTxt: { color: "#fff", fontSize: 14 },
 });
 
 export default function FullscreenVideoPlayer(props) {
@@ -807,9 +405,7 @@ export default function FullscreenVideoPlayer(props) {
       supportedOrientations={["portrait", "landscape"]}
       onRequestClose={props.onClose}
     >
-      <View style={{ flex: 1, backgroundColor: "#000" }}>
-        <PlayerInner {...props} />
-      </View>
+      <PlayerInner {...props} />
     </Modal>
   );
 }

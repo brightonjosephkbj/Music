@@ -45,6 +45,11 @@ export async function addDownloadEntry(entry) {
 
 export async function removeDownload(id) {
   const list = await getDownloads();
+  const entry = list.find((d) => d.id === id);
+  if (entry) {
+    const trash = await getJSON(TRASH_KEY, []);
+    await setJSON(TRASH_KEY, [...trash.filter((t) => t.id !== id), { ...entry, deletedAt: Date.now() }]);
+  }
   return saveDownloads(list.filter((d) => d.id !== id));
 }
 
@@ -129,6 +134,12 @@ export async function deletePlaylist(id, { alsoDeleteSongs = false } = {}) {
     const toRemove = new Set(target.trackIds.filter((tid) => !stillReferenced.has(tid)));
     if (toRemove.size > 0) {
       const downloads = await getDownloads();
+      const gone = downloads.filter((d) => toRemove.has(d.id));
+      const trash = await getJSON(TRASH_KEY, []);
+      await setJSON(TRASH_KEY, [
+        ...trash.filter((t) => !toRemove.has(t.id)),
+        ...gone.map((d) => ({ ...d, deletedAt: Date.now() })),
+      ]);
       await saveDownloads(downloads.filter((d) => !toRemove.has(d.id)));
     }
   }
@@ -145,3 +156,8 @@ export async function addTrackToPlaylist(playlistId, trackId) {
   );
   return savePlaylists(next);
 }
+
+// ---- Trash (soft delete, kept 10 days) ----
+const TRASH_KEY = "b24music:trash";
+export const getTrash = () => getJSON(TRASH_KEY, []);
+export const saveTrash = (list) => setJSON(TRASH_KEY, list);

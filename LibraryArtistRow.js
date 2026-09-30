@@ -5,6 +5,7 @@ import { getArtistPhoto, peekArtistPhoto } from "./artistImages";
 
 const SKIP = /^unknown( artist)?$/i;
 
+// 3-per-row circular artist card (width comes from the 33.33% cell)
 export default function LibraryArtistRow({ artist, tracks, onPress }) {
   const fallback = (tracks.find((t) => t.artwork) || {}).artwork || null;
   const [photo, setPhoto] = useState(SKIP.test(artist) ? null : peekArtistPhoto(artist));
@@ -21,40 +22,38 @@ export default function LibraryArtistRow({ artist, tracks, onPress }) {
   const uri = photo || fallback;
 
   return (
-    <TouchableOpacity style={st.row} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity style={st.cell} onPress={onPress} activeOpacity={0.8}>
       {uri ? (
         <Image source={{ uri }} style={st.photo} />
       ) : (
         <View style={[st.photo, st.center]}>
-          <Ionicons name="person" size={24} color="#C89BFF" />
+          <Ionicons name="person" size={34} color="#C89BFF" />
         </View>
       )}
-      <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={st.name}>{artist}</Text>
-        <Text style={st.count}>{tracks.length} track{tracks.length === 1 ? "" : "s"}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.4)" />
+      <Text numberOfLines={1} style={st.name}>{artist}</Text>
+      <Text numberOfLines={1} style={st.count}>
+        {tracks.length} track{tracks.length === 1 ? "" : "s"}
+      </Text>
     </TouchableOpacity>
   );
 }
 
 const st = StyleSheet.create({
-  row: {
-    flexDirection: "row",
+  cell: {
+    width: "33.3333%",
     alignItems: "center",
-    gap: 14,
     paddingVertical: 10,
-    paddingHorizontal: 4,
+    paddingHorizontal: 6,
   },
   photo: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: "88%",
+    aspectRatio: 1,
+    borderRadius: 999,
     backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 2,
     borderColor: "rgba(200,155,255,0.45)",
   },
   center: { alignItems: "center", justifyContent: "center" },
-  name: { color: "#F5F3FA", fontSize: 15, fontWeight: "700" },
-  count: { color: "rgba(245,243,250,0.55)", fontSize: 12, marginTop: 2 },
+  name: { color: "#F5F3FA", fontSize: 13, fontWeight: "700", marginTop: 8, maxWidth: "100%" },
+  count: { color: "rgba(245,243,250,0.55)", fontSize: 11, marginTop: 2 },
 });

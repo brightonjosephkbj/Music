@@ -107,7 +107,7 @@ function playlistAccent(ids) {
 
 let deviceMediaCache = null;
 
-export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrackId }) {
+export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearchPress, currentTrackId }) {
   const { activeDownloads, pauseDownload, resumeDownload, cancelDownload } = useDownloads();
   const [activeTab, setActiveTab] = useState("Playlists");
   const [downloads, setDownloads] = useState([]);
@@ -847,6 +847,40 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
   const plArtForColor = selectedPlaylist ? getPlaylistArt(selectedPlaylist) : null;
   const plAccent = useArtworkAccent(plArtForColor && plArtForColor.uri, plFallbackAccent);
 
+  const renderVideoTile = useCallback(
+    ({ item }) => (
+      <View style={vtStyles.cell}>
+        <TouchableOpacity
+          activeOpacity={0.88}
+          style={vtStyles.tile}
+          onPress={() => onTrackPress && onTrackPress(item, videos)}
+          onLongPress={(evt) => openMenu(evt, item)}
+          delayLongPress={300}
+        >
+          {item.artwork ? (
+            <Image source={{ uri: item.artwork }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, vtStyles.fallback]}>
+              <Ionicons name="film" size={34} color="rgba(255,255,255,0.35)" />
+            </View>
+          )}
+          <View style={vtStyles.play}>
+            <Ionicons name="play" size={16} color="#fff" />
+          </View>
+          {!!item.duration && (
+            <View style={vtStyles.badge}>
+              <Text style={vtStyles.badgeTxt}>{formatDuration(item.duration)}</Text>
+            </View>
+          )}
+          <View style={vtStyles.caption}>
+            <Text numberOfLines={1} style={vtStyles.captionTxt}>{item.title}</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+    ),
+    [onTrackPress, videos, openMenu]
+  );
+
   const renderTrackRow = useCallback(
     ({ item }) => {
       const inPlaylistEditMode = !!selectedPlaylist && editModeActive;
@@ -1517,7 +1551,24 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
         />
       ) : (
         <>
-          {(activeTab === "Videos" || activeTab === "Downloads") && (
+          {activeTab === "Videos" && (
+            <FlatList
+              key="videos-grid"
+              numColumns={2}
+              data={listData}
+              keyExtractor={keyExtractor}
+              renderItem={renderVideoTile}
+              contentContainerStyle={styles.listContent}
+              ListHeaderComponent={listHeader}
+              ListEmptyComponent={<Text style={styles.emptyText}>{listEmptyText}</Text>}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
+              initialNumToRender={8}
+              maxToRenderPerBatch={8}
+              windowSize={7}
+              removeClippedSubviews
+            />
+          )}
+          {activeTab === "Downloads" && (
             <FlatList
               data={listData}
               keyExtractor={keyExtractor}
@@ -1688,6 +1739,17 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
               ListHeaderComponent={
                 <>
                   <TouchableOpacity
+                    style={[styles.pl2NewPlaylistCard, { marginBottom: 10 }]}
+                    onPress={onMostPlayedPress}
+                    activeOpacity={0.75}
+                  >
+                    <View style={styles.pl2NewPlaylistIconWrap}>
+                      <Ionicons name="flame" size={18} color="#0A0A0A" />
+                    </View>
+                    <Text style={styles.pl2NewPlaylistText}>Most Played</Text>
+                    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.4)" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     style={styles.pl2NewPlaylistCard}
                     onPress={openCreatePlaylistChoice}
                     activeOpacity={0.75}
@@ -1804,9 +1866,11 @@ export default function LibraryScreen({ onTrackPress, onSearchPress, currentTrac
 
           {activeTab === "Artists" && (
             <FlatList
+              key="artist-grid-3col"
               data={artistEntries}
               keyExtractor={([artist]) => artist}
-              contentContainerStyle={styles.listContent}
+              numColumns={3}
+              contentContainerStyle={[styles.listContent, { paddingBottom: 180 }]}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
               ListEmptyComponent={<Text style={styles.emptyText}>No artists yet — download some tracks first.</Text>}
               initialNumToRender={12}
@@ -2717,4 +2781,16 @@ const styles = StyleSheet.create({
   },
   imagePickPreview: { width: 40, height: 40, borderRadius: 8 },
   imagePickText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+});
+
+
+const vtStyles = StyleSheet.create({
+  cell: { width: "50%", padding: 5 },
+  tile: { width: "100%", aspectRatio: 16 / 9, borderRadius: 14, overflow: "hidden", backgroundColor: "#15121d" },
+  fallback: { alignItems: "center", justifyContent: "center", backgroundColor: "#1d1830" },
+  play: { position: "absolute", top: 8, left: 8, width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.45)" },
+  badge: { position: "absolute", top: 8, right: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.6)" },
+  badgeTxt: { color: "#fff", fontSize: 10, fontWeight: "700" },
+  caption: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 8, paddingVertical: 5, backgroundColor: "rgba(0,0,0,0.5)" },
+  captionTxt: { color: "#fff", fontSize: 11, fontWeight: "600" },
 });
