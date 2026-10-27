@@ -6,10 +6,15 @@ const SERVICE = "com.b24.wallpaper.B24WallpaperService";
 
 const KOTLIN = `package com.b24.wallpaper
 
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.media.MediaPlayer
 import android.service.wallpaper.WallpaperService
+import android.util.Log
 import android.view.SurfaceHolder
 import java.io.File
+import java.io.FileInputStream
 
 class B24WallpaperService : WallpaperService() {
 
@@ -27,10 +32,33 @@ class B24WallpaperService : WallpaperService() {
             return File(this@B24WallpaperService.filesDir, "wallpaper.mp4")
         }
 
+        private fun showMessage(text: String) {
+            val h = holderRef ?: return
+            try {
+                val c: Canvas? = h.lockCanvas()
+                if (c != null) {
+                    c.drawColor(Color.parseColor("#121110"))
+                    val p = Paint()
+                    p.color = Color.parseColor("#FF7A3D")
+                    p.textSize = 42f
+                    p.isAntiAlias = true
+                    var y = 300f
+                    for (line in text.split("|")) {
+                        c.drawText(line, 40f, y, p)
+                        y += 60f
+                    }
+                    h.unlockCanvasAndPost(c)
+                }
+            } catch (e: Exception) {
+                Log.e("B24Wallpaper", "draw failed", e)
+            }
+        }
+
         private fun release() {
             val p = player
             player = null
             if (p != null) {
+                try { p.setSurface(null) } catch (e: Exception) {}
                 try { p.stop() } catch (e: Exception) {}
                 try { p.release() } catch (e: Exception) {}
             }
@@ -40,28 +68,41 @@ class B24WallpaperService : WallpaperService() {
             release()
             val h = holderRef ?: return
             val f = videoFile()
-            if (!f.exists()) return
+            if (!f.exists() || f.length() == 0L) {
+                Log.e("B24Wallpaper", "video file missing")
+                showMessage("No wallpaper video found|Open Obsidian, Home background|and tap the wallpaper button again")
+                return
+            }
             try {
                 val mp = MediaPlayer()
-                mp.setDataSource(f.absolutePath)
+                val input = FileInputStream(f)
+                try {
+                    mp.setDataSource(input.fd)
+                } finally {
+                    input.close()
+                }
                 mp.setSurface(h.surface)
                 mp.setVolume(0f, 0f)
                 mp.isLooping = true
-                try { mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING) } catch (e: Exception) {}
                 mp.setOnPreparedListener { p ->
+                    try { p.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING) } catch (e: Exception) {}
                     if (visibleNow) {
                         try { p.start() } catch (e: Exception) {}
                     }
                 }
-                mp.setOnErrorListener { _, _, _ ->
+                mp.setOnErrorListener { _, what, extra ->
+                    Log.e("B24Wallpaper", "player error " + what + " " + extra)
                     release()
+                    showMessage("Video could not play|error " + what + " / " + extra + "|try a short H.264 mp4")
                     true
                 }
                 player = mp
                 loadedStamp = f.lastModified()
                 mp.prepareAsync()
             } catch (e: Exception) {
+                Log.e("B24Wallpaper", "start failed", e)
                 release()
+                showMessage("Wallpaper failed to start|" + (e.message ?: "unknown error"))
             }
         }
 

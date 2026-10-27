@@ -17,6 +17,8 @@ export async function prepareWallpaperVideo(sourceUri) {
   const dest = FS.documentDirectory + WALLPAPER_FILE;
   try { await FS.deleteAsync(dest, { idempotent: true }); } catch (e) {}
   await FS.copyAsync({ from: sourceUri, to: dest });
+  const info = await FS.getInfoAsync(dest);
+  if (!info || !info.exists || !info.size) throw new Error("Video copy failed (file is empty)");
   return dest;
 }
 
