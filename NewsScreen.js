@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -61,7 +62,7 @@ export default function NewsScreen({ onBack }) {
       const data = await res.json();
       setArticles(data.articles || []);
     } catch (err) {
-      setError(err.message || "Couldn't load headlines");
+      setError(friendlyError(err, "Couldn't load headlines"));
     } finally {
       setLoading(false);
       setRefreshing(false);

@@ -12,7 +12,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 
 const CARD_W = Dimensions.get("window").width - 40; // HomeScreen has 20px side padding
-const CARD_H = 172;
+const CARD_H = Math.max(210, Math.round(CARD_W * 0.62));
 const ORCHID = "#C89BFF";
 const AUTO_MS = 5000;
 
@@ -122,7 +122,7 @@ export default function HeroCard({ slides = [] }) {
                 <Text style={styles.title} numberOfLines={2}>
                   {s.title}
                 </Text>
-                <Text style={styles.tagline} numberOfLines={2}>
+                <Text style={styles.tagline} numberOfLines={1}>
                   {s.tagline}
                 </Text>
                 <TouchableOpacity style={styles.playBtn} onPress={s.onPlay} activeOpacity={0.85}>
@@ -150,10 +150,10 @@ const styles = StyleSheet.create({
   wrap: { marginBottom: 16 },
   clip: { width: CARD_W, height: CARD_H, borderRadius: 26, overflow: "hidden" },
   slide: { width: CARD_W, height: CARD_H, justifyContent: "center" },
-  art: { position: "absolute", top: 0, right: 0, width: CARD_W * 0.5, height: CARD_H },
-  textCol: { paddingHorizontal: 18, width: "72%" },
+  art: { position: "absolute", top: 0, right: 0, width: CARD_W * 0.42, height: CARD_H },
+  textCol: { paddingHorizontal: 14, width: "58%" },
   label: { color: ORCHID, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
-  title: { color: "#F5F3FA", fontSize: 20, fontWeight: "800", marginTop: 4 },
+  title: { color: "#F5F3FA", fontSize: 18, fontWeight: "800", marginTop: 4 },
   tagline: { color: "rgba(245,243,250,0.7)", fontSize: 12, marginTop: 4 },
   playBtn: {
     flexDirection: "row",

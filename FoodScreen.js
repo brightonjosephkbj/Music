@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
@@ -99,7 +100,7 @@ export default function FoodScreen({ onBack }) {
       const results = await searchFood(q, 12);
       setSearchResults(results);
     } catch (err) {
-      setSearchError(err.message || "Search failed");
+      setSearchError(friendlyError(err, "Search failed"));
       setSearchResults([]);
     } finally {
       setSearching(false);
@@ -140,7 +141,7 @@ export default function FoodScreen({ onBack }) {
         setSelected(product);
       }
     } catch (err) {
-      setDetailError(err.message || "Barcode lookup failed");
+      setDetailError(friendlyError(err, "Barcode lookup failed"));
     } finally {
       setDetailLoading(false);
     }

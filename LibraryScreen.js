@@ -1,5 +1,6 @@
+import { friendlyError } from "./friendlyError";
 import { useRef as __useRef } from "react";
-const LIB_ORCHID = "#C89BFF";
+const LIB_ORCHID = "#FF7A3D";
 const TAB_ICONS = {
   Videos: "film",
   "All Songs": "musical-notes",
@@ -16,6 +17,14 @@ import { sortTracks, loadArtistSort, saveArtistSort, loadPlayCounts, loadAllSong
 import AllSongsSortSheet, { SORT_LABELS } from "./AllSongsSortSheet";
 import LibraryArtistRow from "./LibraryArtistRow";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { getCachedDeviceMedia } from "./localMediaScanner";
+import { AppState } from "react-native";
+import LibraryVideosScreen from "./LibraryVideosScreen";
+import LibraryDownloadsScreen from "./LibraryDownloadsScreen";
+import LibraryAllSongsScreen from "./LibraryAllSongsScreen";
+import LibraryFoldersScreen from "./LibraryFoldersScreen";
+import LibraryArtistsScreen from "./LibraryArtistsScreen";
+import LibraryPlaylistsScreen from "./LibraryPlaylistsScreen";
 import {
   View,
   Text,
@@ -59,6 +68,7 @@ import {
   getGroupPlaylistTracks, addGroupPlaylistTrack, deleteGroupPlaylistTrack,
   updateGroupPlaylist, uploadPlaylistArt,
 } from "./shareClient";
+import { reportScrollY } from "./shellScroll";
 
 const GRADIENT_COLORS = ["#121212", "#181818", "#121212"];
 const GLASS_BG = "rgba(255,255,255,0.08)";
@@ -70,7 +80,7 @@ const PL_GLASS_BG = "rgba(255,255,255,0.04)";
 const PL_GLASS_BORDER = "rgba(255,255,255,0.09)";
 const PL_DARK_GRAY = "#2A2A2E";
 
-const TABS = ["Videos", "All Songs", "Search", "Folders", "Playlists", "Artists", "Downloads"];
+const TABS = ["Videos", "All Songs", "Folders", "Playlists", "Artists", "Downloads"];
 const AS_AMBER = "#C89BFF";
 const AS_GOLD = "#D4AF37";
 const AS_NEON = "#00FF88";
@@ -107,9 +117,22 @@ function playlistAccent(ids) {
 
 let deviceMediaCache = null;
 
-export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearchPress, currentTrackId }) {
+export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearchPress, currentTrackId, section }) {
   const { activeDownloads, pauseDownload, resumeDownload, cancelDownload } = useDownloads();
-  const [activeTab, setActiveTab] = useState("Playlists");
+  const [activeTab, setActiveTab] = useState("All Songs");
+  const [hubOpen, setHubOpen] = useState(false);
+  // Nav tabs "Videos" / "Downloads" (from AppShell) open Library on that section;
+  // leaving them returns to the normal tile hub.
+  const prevSectionRef = useRef(section);
+  useEffect(() => {
+    if (section === "Videos" || section === "Downloads") {
+      setActiveTab(section);
+      setHubOpen(false);
+    } else if (prevSectionRef.current === "Videos" || prevSectionRef.current === "Downloads") {
+      setActiveTab("All Songs");
+    }
+    prevSectionRef.current = section;
+  }, [section]);
   const [downloads, setDownloads] = useState([]);
   const [deviceAudio, setDeviceAudio] = useState(deviceMediaCache?.audio || []);
   const [deviceVideo, setDeviceVideo] = useState(deviceMediaCache?.video || []);
@@ -204,6 +227,20 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
   const [imageViewerItems, setImageViewerItems] = useState([]);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
 
+  // Paint the last saved scan instantly (it survives app restarts); the normal
+  // scan then refreshes it in the background.
+  useEffect(() => {
+    let alive = true;
+    getCachedDeviceMedia().then((c) => {
+      if (!alive || !c) return;
+      setDeviceAudio((cur) => (cur.length ? cur : c.audio || []));
+      setDeviceVideo((cur) => (cur.length ? cur : c.video || []));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const loadAll = useCallback(async () => {
     const [d, f, p] = await Promise.all([getDownloads(), getFolders(), getPlaylists()]);
     setDownloads(d);
@@ -212,7 +249,13 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
     try {
       const user = await getCurrentUser();
       if (user?.id) {
-        const groups = await listGroupPlaylists(user.id);
+        // give up after 8s so a dead connection can't hang the Library
+        const groups = await Promise.race([
+          listGroupPlaylists(user.id),
+          new Promise((_, rej) =>
+            setTimeout(() => rej(new Error("group playlists timed out")), 8000)
+          ),
+        ]);
         setGroupPlaylists(groups);
       }
     } catch (e) {
@@ -222,6 +265,25 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
 
   useEffect(() => {
     loadAll();
+  }, [loadAll]);
+
+  useEffect(() => {
+    if (selectedFolder || selectedPlaylist || selectedArtist || selectedGroupPlaylist) {
+      setHubOpen(false);
+    }
+  }, [selectedFolder, selectedPlaylist, selectedArtist, selectedGroupPlaylist]);
+
+  // Refresh when the app returns after being away more than 60s
+  const leftAt = useRef(Date.now());
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s !== "active") {
+        leftAt.current = Date.now();
+      } else if (Date.now() - leftAt.current > 60000) {
+        loadAll().catch(() => {});
+      }
+    });
+    return () => sub.remove();
   }, [loadAll]);
 
   useEffect(() => {
@@ -240,7 +302,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
     } catch (err) {
       Alert.alert(
         "Couldn't generate playlist",
-        err.message || "Something went wrong - try again in a bit."
+        friendlyError(err, "Something went wrong - try again in a bit.")
       );
     } finally {
       setAiGenerating(false);
@@ -265,7 +327,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
       if (result.error) setScanErrorMsg(result.error);
     } catch (err) {
       console.error("[runScan] unexpected error:", err);
-      setScanErrorMsg(err.message || "Unknown error during scan");
+      setScanErrorMsg(friendlyError(err, "Unknown error during scan"));
     } finally {
       setScanning(false);
     }
@@ -574,7 +636,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
       setGroupCreateVisible(false);
       loadAll();
     } catch (e) {
-      Alert.alert("Couldn't create group playlist", e.message || "Something went wrong - try again.");
+      Alert.alert("Couldn't create group playlist", friendlyError(e, "Something went wrong - try again."));
     } finally {
       setGroupCreating(false);
     }
@@ -617,7 +679,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
       setGroupAddVisible(false);
       setGroupAddSelectedIds(new Set());
     } catch (e) {
-      Alert.alert("Couldn't add songs", e.message || "Something went wrong - try again.");
+      Alert.alert("Couldn't add songs", friendlyError(e, "Something went wrong - try again."));
     } finally {
       setGroupAddBusy(false);
     }
@@ -647,7 +709,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
               setGroupEditModeActive(false);
               setGroupEditSelectedIds(new Set());
             } catch (e) {
-              Alert.alert("Couldn't remove songs", e.message || "Something went wrong - try again.");
+              Alert.alert("Couldn't remove songs", friendlyError(e, "Something went wrong - try again."));
             } finally {
               setGroupRemoveBusy(false);
             }
@@ -691,7 +753,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
       setGroupInfoVisible(false);
       loadAll();
     } catch (e) {
-      Alert.alert("Couldn't update playlist", e.message || "Something went wrong - try again.");
+      Alert.alert("Couldn't update playlist", friendlyError(e, "Something went wrong - try again."));
     } finally {
       setGroupInfoSaving(false);
     }
@@ -1418,9 +1480,14 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
             <Text style={styles.backGlyph}>‹</Text>
             {!selectedPlaylist && !selectedGroupPlaylist && <Text style={styles.title} numberOfLines={1}>{detailTitle}</Text>}
           </TouchableOpacity>
+        ) : false ? (
+          <TouchableOpacity onPress={() => setHubOpen(true)} style={styles.backButtonRow} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={styles.backGlyph}>‹</Text>
+            <Text style={styles.title} numberOfLines={1}>{activeTab}</Text>
+          </TouchableOpacity>
         ) : (
           <View>
-            <Text style={styles.title}>Your library</Text>
+            <Text style={styles.title}>{activeTab === "Videos" || activeTab === "Downloads" ? activeTab : "Your library"}</Text>
             <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>
               {allSongs.length} songs · {videos.length} videos
             </Text>
@@ -1497,43 +1564,38 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
         </View>
       </View>
 
-      {!detailMode && (
-        <FlatList
+      {!detailMode && (activeTab === "All Songs" || activeTab === "Playlists" || activeTab === "Artists" || activeTab === "Folders") && (
+        <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          ref={tabListRef}
-          onScrollToIndexFailed={() => {}}
-          contentContainerStyle={{ paddingRight: 20, alignItems: "center" }}
-          style={[styles.tabRow, { height: 52 }]}
-          data={TABS}
-          keyExtractor={(t) => t}
-          renderItem={({ item: tab }) => {
-            const active = tab === activeTab;
+          style={{ flexGrow: 0, flexShrink: 0 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12 }}
+        >
+          {[
+            { tab: "All Songs", label: "Songs" },
+            { tab: "Playlists", label: "Playlists" },
+            { tab: "Artists", label: "Artists" },
+            { tab: "Folders", label: "Folders" },
+            { tab: "__top", label: "Most played" },
+          ].filter((c) => c.tab !== "Folders" || folders.length > 0).map((c) => {
+            const on = c.tab === activeTab;
             return (
               <TouchableOpacity
-                onPress={() => setActiveTab(tab)}
-                style={[
-                  styles.tab,
-                  active && styles.tabActive,
-                  { flexDirection: "row", alignItems: "center", justifyContent: "center", height: 40, paddingVertical: 0 },
-                  active && { backgroundColor: LIB_ORCHID, borderColor: LIB_ORCHID },
-                ]}
+                key={c.tab}
+                activeOpacity={0.8}
+                onPress={() => (c.tab === "__top" ? (onMostPlayedPress && onMostPlayedPress()) : setActiveTab(c.tab))}
+                style={{ height: 40, paddingHorizontal: 18, borderRadius: 20, marginRight: 8, justifyContent: "center", backgroundColor: on ? LIB_ORCHID : "rgba(255,255,255,0.08)" }}
               >
-                <Ionicons
-                  name={TAB_ICONS[tab] || "ellipse"}
-                  size={15}
-                  color={active ? "#0B0A0F" : "#fff"}
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={[styles.tabText, active && styles.tabTextActive, { includeFontPadding: false }]}>{tab}</Text>
+                <Text style={{ color: on ? "#121110" : "#fff", fontSize: 14, fontWeight: "600" }}>{c.label}</Text>
               </TouchableOpacity>
             );
-          }}
-        />
+          })}
+        </ScrollView>
       )}
 
+
       {detailMode ? (
-        <FlatList
+        <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
           data={detailData}
           keyExtractor={selectedGroupPlaylist ? (item) => String(item.id) : keyExtractor}
           renderItem={selectedGroupPlaylist ? renderGroupTrackRow : renderTrackRow}
@@ -1547,343 +1609,115 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
           initialNumToRender={12}
           maxToRenderPerBatch={12}
           windowSize={7}
-          removeClippedSubviews
+          removeClippedSubviews={false}
         />
-      ) : (
+      ) : hubOpen ? null : (
         <>
           {activeTab === "Videos" && (
-            <FlatList
-              key="videos-grid"
-              numColumns={2}
-              data={listData}
-              keyExtractor={keyExtractor}
-              renderItem={renderVideoTile}
-              contentContainerStyle={styles.listContent}
-              ListHeaderComponent={listHeader}
-              ListEmptyComponent={<Text style={styles.emptyText}>{listEmptyText}</Text>}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-              initialNumToRender={8}
-              maxToRenderPerBatch={8}
-              windowSize={7}
-              removeClippedSubviews
+            <LibraryVideosScreen
+              videos={videos}
+              onTrackPress={onTrackPress}
+              onItemMenu={openMenu}
+              header={listHeader}
+              emptyText={listEmptyText}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
             />
           )}
           {activeTab === "Downloads" && (
-            <FlatList
-              data={listData}
-              keyExtractor={keyExtractor}
-              renderItem={renderTrackRow}
-              contentContainerStyle={styles.listContent}
-              ListHeaderComponent={listHeader}
-              ListEmptyComponent={<Text style={styles.emptyText}>{listEmptyText}</Text>}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-              initialNumToRender={12}
-              maxToRenderPerBatch={12}
-              windowSize={7}
-              removeClippedSubviews
+            <LibraryDownloadsScreen
+              downloads={downloads}
+              onTrackPress={onTrackPress}
+              onItemMenu={openMenu}
+              onOpenImage={openImage}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
             />
           )}
 
           {activeTab === "All Songs" && (
-            <FlatList
-              data={filteredAllSongs}
-              keyExtractor={keyExtractor}
-              renderItem={renderAllSongsRow}
-              contentContainerStyle={styles.listContent}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-              ListHeaderComponent={
-                <>
-                  <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
-                    <TextInput
-                      value={songSearchQuery}
-                      onChangeText={setSongSearchQuery}
-                      placeholder="Find a song..."
-                      placeholderTextColor="rgba(255,255,255,0.4)"
-                      style={{
-                        backgroundColor: "rgba(255,255,255,0.08)",
-                        borderRadius: 10,
-                        paddingHorizontal: 14,
-                        paddingVertical: 10,
-                        color: "#fff",
-                        fontSize: 15,
-                      }}
-                    />
-                  </View>
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 10,
-                      backgroundColor: "rgba(255,255,255,0.06)",
-                      borderRadius: 14,
-                      paddingVertical: 10,
-                      paddingHorizontal: 12,
-                      marginBottom: 12,
-                    }}
-                  >
-                    <Ionicons name="sync" size={18} color={LIB_ORCHID} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: "#F5F3FA", fontWeight: "700", fontSize: 13 }}>
-                        {allSongs.length} local files
-                      </Text>
-                      <Text
-                        style={{ color: scanErrorMsg ? "#FF6B6B" : "rgba(255,255,255,0.5)", fontSize: 11, marginTop: 1 }}
-                        numberOfLines={1}
-                      >
-                        {scanDenied
-                          ? "Storage permission denied - enable it in app settings"
-                          : scanErrorMsg
-                          ? scanErrorMsg
-                          : lastScanCounts
-                          ? `Last scan: ${lastScanCounts.audio} audio, ${lastScanCounts.video} video`
-                          : "Scan your device for new files"}
-                      </Text>
-                    </View>
-                    <TouchableOpacity style={styles.asHeroRescanBtn} onPress={runScan} disabled={scanning}>
-                      <Text style={styles.asHeroRescanText}>{scanning ? "Scanning..." : "Rescan"}</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => {
-                        if (filteredAllSongs.length > 0 && onTrackPress) onTrackPress(filteredAllSongs[0], filteredAllSongs);
-                      }}
-                      style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: LIB_ORCHID, borderRadius: 22, paddingVertical: 11 }}
-                    >
-                      <Ionicons name="play" size={16} color="#0B0A0F" />
-                      <Text style={{ color: "#0B0A0F", fontWeight: "800", fontSize: 14 }}>Play</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => {
-                        if (filteredAllSongs.length === 0 || !onTrackPress) return;
-                        const q = [...filteredAllSongs];
-                        for (let i = q.length - 1; i > 0; i--) {
-                          const j = Math.floor(Math.random() * (i + 1));
-                          [q[i], q[j]] = [q[j], q[i]];
-                        }
-                        onTrackPress(q[0], q);
-                      }}
-                      style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "rgba(255,255,255,0.12)", borderRadius: 22, paddingVertical: 11, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)" }}
-                    >
-                      <Ionicons name="shuffle" size={16} color="#F5F3FA" />
-                      <Text style={{ color: "#F5F3FA", fontWeight: "700", fontSize: 14 }}>Shuffle</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.asSectionRow}>
-                    <Text style={styles.asSectionLabel}>TRACKS ({allSongs.length})</Text>
-                    <TouchableOpacity
-                      style={styles.asSortRow}
-                      onPress={() => setSortSheetOpen(true)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <Text style={styles.asSortText}>{SORT_LABELS[allSortMode]}</Text>
-                      <Ionicons name="options-outline" size={14} color={AS_AMBER} />
-                    </TouchableOpacity>
-                  </View>
-                </>
-              }
-              ListEmptyComponent={<Text style={styles.emptyText}>No songs yet - download some, or scan your phone storage above.</Text>}
-              initialNumToRender={12}
-              maxToRenderPerBatch={12}
-              windowSize={7}
-              removeClippedSubviews
+            <LibraryAllSongsScreen
+              songs={allSongs}
+              filteredSongs={filteredAllSongs}
+              searchQuery={songSearchQuery}
+              onSearchChange={setSongSearchQuery}
+              sortMode={allSortMode}
+              onOpenSort={() => setSortSheetOpen(true)}
+              scanning={scanning}
+              scanDenied={scanDenied}
+              scanErrorMsg={scanErrorMsg}
+              lastScanCounts={lastScanCounts}
+              onRescan={runScan}
+              currentTrackId={currentTrackId}
+              onTrackPress={onTrackPress}
+              onItemMenu={openMenu}
+              onOpenImage={openImage}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
             />
           )}
 
           {activeTab === "Folders" && (
-            <FlatList
-              data={folders}
-              keyExtractor={(f) => f.id}
-              contentContainerStyle={styles.listContent}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-              ListHeaderComponent={
-                <TouchableOpacity
-                  style={styles.createTile}
-                  onPress={() => {
-                    setPromptMode("folder");
-                    setPromptValue("");
-                    setPromptVisible(true);
-                  }}
-                >
-                  <Text style={styles.createTileText}>+ New Folder</Text>
-                </TouchableOpacity>
-              }
-              ListEmptyComponent={
-                <Text style={styles.emptyText}>No folders yet — create one to organize anything: songs, videos, or playlists together.</Text>
-              }
-              renderItem={({ item: f }) => (
-                <TouchableOpacity style={styles.folderRow} onPress={() => setSelectedFolder(f)}>
-                  <Text style={styles.folderName}>{f.name}</Text>
-                  <Text style={styles.folderCount}>{f.itemIds.length} items</Text>
-                  <TouchableOpacity onPress={async () => { await deleteFolder(f.id); loadAll(); }}>
-                    <Text style={styles.folderDelete}>Delete</Text>
-                  </TouchableOpacity>
-                </TouchableOpacity>
-              )}
+            <LibraryFoldersScreen
+              folders={folders}
+              onCreate={() => {
+                setPromptMode("folder");
+                setPromptValue("");
+                setPromptVisible(true);
+              }}
+              onOpenFolder={setSelectedFolder}
+              onDeleteFolder={async (f) => { await deleteFolder(f.id); loadAll(); }}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
             />
           )}
 
           {activeTab === "Playlists" && (
-            <FlatList
-              key="playlist-grid-2col"
-              data={filteredPlaylists}
-              keyExtractor={(p) => p.id}
-              numColumns={2}
-              columnWrapperStyle={styles.tileColumnWrapper}
-              contentContainerStyle={styles.listContent}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-              ListHeaderComponent={
-                <>
-                  <TouchableOpacity
-                    style={[styles.pl2NewPlaylistCard, { marginBottom: 10 }]}
-                    onPress={onMostPlayedPress}
-                    activeOpacity={0.75}
-                  >
-                    <View style={styles.pl2NewPlaylistIconWrap}>
-                      <Ionicons name="flame" size={18} color="#0A0A0A" />
-                    </View>
-                    <Text style={styles.pl2NewPlaylistText}>Most Played</Text>
-                    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.4)" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.pl2NewPlaylistCard}
-                    onPress={openCreatePlaylistChoice}
-                    activeOpacity={0.75}
-                  >
-                    <View style={styles.pl2NewPlaylistIconWrap}>
-                      <Ionicons name="add" size={20} color="#0A0A0A" />
-                    </View>
-                    <Text style={styles.pl2NewPlaylistText}>New Playlist</Text>
-                    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.4)" />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.pl2AiCard, aiGenerating && { opacity: 0.6 }]}
-                    onPress={generateAI}
-                    disabled={aiGenerating}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.pl2AiGlow} pointerEvents="none" />
-                    <View style={styles.pl2AiRow}>
-                      <View style={styles.pl2AiIconWrap}>
-                        <Ionicons name="sparkles" size={20} color={ACCENT_GREEN} />
-                      </View>
-                      <View style={styles.pl2AiTextWrap}>
-                        <Text style={styles.pl2AiEyebrow}>AI STUDIO</Text>
-                        <Text style={styles.pl2AiTitle}>
-                          {aiGenerating ? "Generating..." : "Generate Custom Mix"}
-                        </Text>
-                      </View>
-                      <View style={styles.pl2AiChevronBtn}>
-                        <Ionicons name="chevron-forward" size={14} color="#fff" />
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-
-                  <View style={styles.pl2SearchBar}>
-                    <Ionicons name="search" size={14} color="rgba(255,255,255,0.5)" />
-                    <TextInput
-                      style={styles.pl2SearchInput}
-                      placeholder="Search playlists..."
-                      placeholderTextColor="rgba(255,255,255,0.4)"
-                      value={playlistSearch}
-                      onChangeText={setPlaylistSearch}
-                    />
-                  </View>
-
-                  <View style={styles.pl2SectionRow}>
-                    <Text style={styles.pl2SectionLabel}>YOUR COLLECTIONS</Text>
-                    <View style={styles.pl2SectionDot} />
-                  </View>
-                </>
-              }
-              ListEmptyComponent={<Text style={styles.emptyText}>No playlists found.</Text>}
-              renderItem={({ item: p }) => {
-                const art = getPlaylistArt(p);
-                return (
-                  <TouchableOpacity
-                    style={styles.pl2Tile}
-                    onPress={async () => {
-                      if (p.is_group) {
-                        setSelectedGroupPlaylist(p);
-                        const cached = groupTracksCacheRef.current[p.id];
-                        if (cached) {
-                          // Already loaded this playlist before - show it
-                          // instantly, no network round-trip.
-                          setGroupPlaylistTracks(cached);
-                        } else {
-                          setGroupTracksLoading(true);
-                          try {
-                            const tracks = await getGroupPlaylistTracks(p.id);
-                            groupTracksCacheRef.current[p.id] = tracks;
-                            setGroupPlaylistTracks(tracks);
-                          } catch (e) {
-                            Alert.alert("Couldn't load playlist", e.message || "Try again shortly.");
-                            setSelectedGroupPlaylist(null);
-                          } finally {
-                            setGroupTracksLoading(false);
-                          }
-                        }
-                      } else {
-                        setSelectedPlaylist(p);
-                      }
-                    }}
-                    onLongPress={(evt) => !p.is_group && openPlaylistMenu(evt, p)}
-                    delayLongPress={300}
-                    activeOpacity={0.85}
-                  >
-                    <View style={styles.pl2TileCoverWrap}>
-                      {art ? (
-                        <Image source={art} style={styles.pl2TileArt} />
-                      ) : (
-                        <View style={[styles.pl2TileArt, styles.pl2TilePlaceholder]}>
-                          <Ionicons name="musical-notes" size={30} color="rgba(255,255,255,0.35)" />
-                        </View>
-                      )}
-                      <View style={styles.pl2TilePlayFab}>
-                        <Ionicons name="play" size={13} color="#0A0A0A" style={{ marginLeft: 1 }} />
-                      </View>
-                      {p.is_group && (
-                        <View style={styles.groupBadge}>
-                          <Ionicons name="people" size={10} color="#000" />
-                          <Text style={styles.groupBadgeText}>Group</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text numberOfLines={1} style={styles.pl2TileTitle}>{p.name}</Text>
-                    <Text numberOfLines={1} style={styles.pl2TileSub}>
-                      {p.is_group ? "Group playlist" : `${p.trackIds ? p.trackIds.length : 0} tracks`}
-                    </Text>
-                  </TouchableOpacity>
-                );
+            <LibraryPlaylistsScreen
+              playlists={filteredPlaylists}
+              getPlaylistArt={getPlaylistArt}
+              search={playlistSearch}
+              onSearchChange={setPlaylistSearch}
+              aiGenerating={aiGenerating}
+              onGenerateAI={generateAI}
+              onMostPlayed={onMostPlayedPress}
+              onCreate={openCreatePlaylistChoice}
+              onOpenPlaylist={async (p) => {
+                if (p.is_group) {
+                  setSelectedGroupPlaylist(p);
+                  const cached = groupTracksCacheRef.current[p.id];
+                  if (cached) {
+                    // Already loaded this playlist before - show it instantly.
+                    setGroupPlaylistTracks(cached);
+                  } else {
+                    setGroupTracksLoading(true);
+                    try {
+                      const tracks = await getGroupPlaylistTracks(p.id);
+                      groupTracksCacheRef.current[p.id] = tracks;
+                      setGroupPlaylistTracks(tracks);
+                    } catch (e) {
+                      Alert.alert("Couldn't load playlist", friendlyError(e, "Try again shortly."));
+                      setSelectedGroupPlaylist(null);
+                    } finally {
+                      setGroupTracksLoading(false);
+                    }
+                  }
+                } else {
+                  setSelectedPlaylist(p);
+                }
               }}
+              onPlaylistMenu={openPlaylistMenu}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
             />
           )}
 
           {activeTab === "Artists" && (
-            <FlatList
-              key="artist-grid-3col"
-              data={artistEntries}
-              keyExtractor={([artist]) => artist}
-              numColumns={3}
-              contentContainerStyle={[styles.listContent, { paddingBottom: 180 }]}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-              ListEmptyComponent={<Text style={styles.emptyText}>No artists yet — download some tracks first.</Text>}
-              initialNumToRender={12}
-              maxToRenderPerBatch={12}
-              windowSize={7}
-              removeClippedSubviews
-              renderItem={({ item: [artist, tracks] }) => (
-                <LibraryArtistRow
-                  artist={artist}
-                  tracks={tracks}
-                  onPress={() => setSelectedArtist(artist)}
-                />
-              )}
+            <LibraryArtistsScreen
+              artistEntries={artistEntries}
+              onOpenArtist={setSelectedArtist}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
             />
           )}
         </>
@@ -2063,7 +1897,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
         <View style={styles.promptBackdrop}>
           <View style={[styles.promptCard, { maxHeight: "70%" }]}>
             <Text style={styles.promptTitle}>Add Songs</Text>
-            <FlatList
+            <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
               data={groupAddCandidates}
               keyExtractor={(item) => item.id}
               renderItem={({ item }) => {
@@ -2215,7 +2049,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
                 {groupFriendsLoading ? (
                   <Text style={styles.emptyText}>Loading friends...</Text>
                 ) : (
-                  <FlatList
+                  <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
                     data={groupFriends}
                     keyExtractor={(item) => String(item.id)}
                     renderItem={({ item }) => {
@@ -2265,7 +2099,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
         <View style={styles.promptBackdrop}>
           <View style={[styles.promptCard, { maxHeight: "70%" }]}>
             <Text style={styles.promptTitle}>Add Songs</Text>
-            <FlatList
+            <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
               data={addSongsCandidates}
               keyExtractor={(item) => item.id}
               renderItem={({ item }) => {
@@ -2330,11 +2164,12 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
   );
 }
 
+const TOP_PAD = ((require("react-native").StatusBar.currentHeight) || 24) + 32; // real status-bar height
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#121212" },
   header: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingTop: 56, paddingHorizontal: 20, paddingBottom: 14,
+    paddingTop: TOP_PAD, paddingHorizontal: 20, paddingBottom: 14,
   },
   title: { color: "#fff", fontSize: 22, fontWeight: "700" },
   backButtonRow: { flexDirection: "row", alignItems: "center", flex: 1, marginRight: 12, gap: 6 },

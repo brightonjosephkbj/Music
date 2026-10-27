@@ -16,6 +16,7 @@ import {
   removeHistoryEntry,
 } from "./listeningHistory";
 import ContextMenuCard from "./ContextMenuCard";
+import { reportScrollY } from "./shellScroll";
 
 // ---------------------------------------------------------------------------
 // Palette: Onyx (#020202) as the base + Candy Blue (#B2D5E5) as the frosted-
@@ -175,7 +176,7 @@ export default function RecentScreen({ onBack, onTrackPress }) {
         </View>
       )}
 
-      <FlatList
+      <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
         data={flatData}
         keyExtractor={(item) => item.key}
         contentContainerStyle={styles.listContent}

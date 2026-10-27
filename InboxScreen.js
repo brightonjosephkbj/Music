@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 // ---------------------------------------------------------------------------
 // InboxScreen — friends you can share tracks with, plus a slide-up sheet
 // to look up a username and send a friend request. People only appear in
@@ -294,7 +295,7 @@ function AddFriendSheet({ visible, onClose, currentUserId, onFriendRequestSent }
       onFriendRequestSent?.();
     } catch (e) {
       setSendState("error");
-      setErrorMsg(e.message || "Failed to send request");
+      setErrorMsg(friendlyError(e, "Failed to send request"));
     }
   };
 

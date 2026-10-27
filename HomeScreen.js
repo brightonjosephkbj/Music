@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -32,6 +33,7 @@ import ArtistsRow from "./HomeArtistsRow";
 // ---------------------------------------------------------------------------
 import { authedHeaders } from "./apiClient";
 import { getCurrentUser, getShareInbox } from "./shareClient";
+import { reportScrollY } from "./shellScroll";
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
 
@@ -165,7 +167,7 @@ export default function HomeScreen({
       setOffset(newTracks.length);
       setHasMore(newTracks.length >= 15);
     } catch (err) {
-      if (trendingCache.tracks.length === 0) setError(err.message || "Couldn't load trending tracks");
+      if (trendingCache.tracks.length === 0) setError(friendlyError(err, "Couldn't load trending tracks"));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -254,14 +256,14 @@ export default function HomeScreen({
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-        onScroll={handleScroll}
+        onScroll={(e) => { reportScrollY(e.nativeEvent.contentOffset.y); handleScroll(e); }}
         scrollEventThrottle={150}
       >
         {/* ---------- Header: avatar + personalized greeting + settings/inbox/recent ---------- */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <Ionicons name="musical-notes" size={26} color="#C89BFF" />
-            <Text style={{ color: "#fff", fontSize: 20, fontWeight: "800", marginLeft: 8 }}>
+            <Text numberOfLines={1} style={{ color: "#fff", fontSize: 20, fontWeight: "800", marginLeft: 8, flexShrink: 1 }}>
               B24 Music
             </Text>
           </View>
@@ -379,13 +381,14 @@ export default function HomeScreen({
 const GLASS_BG = "rgba(255,255,255,0.14)";
 const GLASS_BORDER = "rgba(255,255,255,0.25)";
 
+const TOP_PAD = ((require("react-native").StatusBar.currentHeight) || 24) + 32; // real status-bar height
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#020202" },
-  scrollContent: { paddingTop: 56, paddingHorizontal: 20, paddingBottom: 140 },
+  scrollContent: { paddingTop: TOP_PAD, paddingHorizontal: 20, paddingBottom: 140 },
 
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 },
-  headerRight: { flexDirection: "row", gap: 8 },
-  headerLeft: { flexDirection: "row", alignItems: "center" },
+  headerRight: { flexDirection: "row", gap: SCREEN_WIDTH < 360 ? 6 : 8, flexShrink: 0, marginLeft: 8 },
+  headerLeft: { flexDirection: "row", alignItems: "center", flexShrink: 1, minWidth: 0 },
   avatarCircle: {
     width: 40,
     height: 40,
@@ -401,7 +404,7 @@ const styles = StyleSheet.create({
   greetingSubtitle: { color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 },
   iconButton: {
     position: "relative",
-    paddingHorizontal: 14,
+    paddingHorizontal: SCREEN_WIDTH < 360 ? 10 : 14,
     height: 40,
     borderRadius: 20,
     backgroundColor: GLASS_BG,

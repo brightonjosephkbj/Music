@@ -1,3 +1,5 @@
+import VersionTap from "./VersionTap";
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
@@ -189,7 +191,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
       const avatarUrl = await uploadAvatar(authUser.id, uri);
       onProfileUpdate?.({ avatar_url: avatarUrl });
     } catch (err) {
-      setAvatarError(err.message || "Upload failed");
+      setAvatarError(friendlyError(err, "Upload failed"));
     } finally {
       setAvatarUploading(false);
     }
@@ -209,7 +211,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
       onProfileUpdate?.({ username: trimmed, handle: `${trimmed}@b24.me` });
       setEditingUsername(false);
     } catch (err) {
-      setUsernameError(err.message || "Failed to update username");
+      setUsernameError(friendlyError(err, "Failed to update username"));
     } finally {
       setUsernameSaving(false);
     }
@@ -228,7 +230,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
       onProfileUpdate?.({ bio: trimmed });
       setEditingBio(false);
     } catch (err) {
-      setBioError(err.message || "Failed to update bio");
+      setBioError(friendlyError(err, "Failed to update bio"));
     } finally {
       setBioSaving(false);
     }
@@ -246,7 +248,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
       const result = await Updates.checkForUpdateAsync();
       setStatus(result.isAvailable ? "available" : "upToDate");
     } catch (err) {
-      setError(err.message || "Couldn't reach the update server");
+      setError(friendlyError(err, "Couldn't reach the update server"));
       setStatus("error");
     }
   };
@@ -258,7 +260,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
       await Updates.fetchUpdateAsync();
       setStatus("ready");
     } catch (err) {
-      setError(err.message || "Failed to download the update");
+      setError(friendlyError(err, "Failed to download the update"));
       setStatus("error");
     }
   };
@@ -267,7 +269,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
     try {
       await Updates.reloadAsync();
     } catch (err) {
-      setError(err.message || "Failed to apply the update");
+      setError(friendlyError(err, "Failed to apply the update"));
       setStatus("error");
     }
   };
@@ -445,7 +447,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
                 }
               />
             )}
-            <Text style={st.footer}>B24 Music · v{APP_VERSION}</Text>
+            <VersionTap style={st.footer} text={`B24 Music · v${APP_VERSION}`} />
           </>
         )}
 

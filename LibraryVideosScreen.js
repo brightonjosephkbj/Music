@@ -1,0 +1,92 @@
+import React, { useCallback } from "react";
+import {
+  View, Text, TouchableOpacity, Image, FlatList, RefreshControl, StyleSheet,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { reportScrollY } from "./shellScroll";
+
+function formatDuration(sec) {
+  if (!sec && sec !== 0) return "";
+  const m = Math.floor(sec / 60);
+  const ss = Math.floor(sec % 60).toString().padStart(2, "0");
+  return `${m}:${ss}`;
+}
+
+// Videos section of the Library. LibraryScreen passes in the data and
+// callbacks, so this file only has to worry about drawing the grid.
+export default function LibraryVideosScreen({
+  videos,
+  onTrackPress,
+  onItemMenu,   // (event, item) => void, long-press menu
+  header,       // element shown above the grid (the storage scan header)
+  emptyText,
+  refreshing,
+  onRefresh,
+}) {
+  const renderTile = useCallback(
+    ({ item }) => (
+      <View style={vtStyles.cell}>
+        <TouchableOpacity
+          activeOpacity={0.88}
+          style={vtStyles.tile}
+          onPress={() => onTrackPress && onTrackPress(item, videos)}
+          onLongPress={(evt) => onItemMenu && onItemMenu(evt, item)}
+          delayLongPress={300}
+        >
+          {item.artwork ? (
+            <Image source={{ uri: item.artwork }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, vtStyles.fallback]}>
+              <Ionicons name="film" size={34} color="rgba(255,255,255,0.35)" />
+            </View>
+          )}
+          <View style={vtStyles.play}>
+            <Ionicons name="play" size={16} color="#fff" />
+          </View>
+          {!!item.duration && (
+            <View style={vtStyles.badge}>
+              <Text style={vtStyles.badgeTxt}>{formatDuration(item.duration)}</Text>
+            </View>
+          )}
+          <View style={vtStyles.caption}>
+            <Text numberOfLines={1} style={vtStyles.captionTxt}>{item.title}</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+    ),
+    [onTrackPress, videos, onItemMenu]
+  );
+
+  return (
+    <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
+      key="videos-grid"
+      numColumns={2}
+      data={videos}
+      keyExtractor={(item) => item.id}
+      renderItem={renderTile}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 160 }}
+      ListHeaderComponent={header}
+      ListEmptyComponent={
+        <Text style={{ color: "rgba(255,255,255,0.55)", textAlign: "center", marginTop: 40 }}>
+          {emptyText}
+        </Text>
+      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
+      initialNumToRender={8}
+      maxToRenderPerBatch={8}
+      windowSize={7}
+      removeClippedSubviews={false}
+    />
+  );
+}
+
+const vtStyles = StyleSheet.create({
+  cell: { width: "50%", padding: 5 },
+  tile: { width: "100%", aspectRatio: 16 / 9, borderRadius: 14, overflow: "hidden", backgroundColor: "#15121d" },
+  fallback: { alignItems: "center", justifyContent: "center", backgroundColor: "#1d1830" },
+  play: { position: "absolute", top: 8, left: 8, width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.45)" },
+  badge: { position: "absolute", top: 8, right: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.6)" },
+  badgeTxt: { color: "#fff", fontSize: 10, fontWeight: "700" },
+  caption: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 8, paddingVertical: 5, backgroundColor: "rgba(0,0,0,0.5)" },
+  captionTxt: { color: "#fff", fontSize: 11, fontWeight: "600" },
+});

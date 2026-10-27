@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -162,7 +163,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
           })),
         });
       } catch (err) {
-        setError(err.message || "Couldn't read that playlist");
+        setError(friendlyError(err, "Couldn't read that playlist"));
       } finally {
         setLoading(false);
       }
@@ -173,7 +174,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
       const resolved = await resolveUrl(trimmed);
       setResult(resolved);
     } catch (err) {
-      setError(err.message || "Couldn't read that link");
+      setError(friendlyError(err, "Couldn't read that link"));
     } finally {
       setLoading(false);
     }
@@ -234,7 +235,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
       await saveDownloads([...existing, entry]);
       setDownloadedEntry(entry);
     } catch (err) {
-      setError(err.message || "Download failed");
+      setError(friendlyError(err, "Download failed"));
     } finally {
       setDownloading(false);
       finishDownload(dlKey);

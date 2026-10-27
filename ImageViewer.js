@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState } from "react";
 import {
   Modal,
@@ -231,7 +232,7 @@ export default function ImageViewer({ visible, images, initialIndex = 0, onClose
 
       Alert.alert("Saved", "Image saved to your gallery and added to Downloads.");
     } catch (err) {
-      Alert.alert("Save failed", err.message || "Couldn't save this image.");
+      Alert.alert("Save failed", friendlyError(err, "Couldn't save this image."));
     } finally {
       setSaving(false);
     }

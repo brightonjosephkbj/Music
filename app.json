@@ -2,7 +2,7 @@
   "expo": {
     "name": "Obsidian",
     "slug": "b24sound",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -112,11 +112,10 @@
             "useLegacyPackaging": true
           }
         }
-      ]
+      ],
+      "./plugins/withLiveWallpaper"
     ],
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.2.0",
     "updates": {
       "url": "https://nrighton233j-api-cache.hf.space/api/updates/manifest?app_id=b24music",
       "enabled": true,

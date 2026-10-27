@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
@@ -66,7 +67,7 @@ export default function ArtScreen({ onBack }) {
       const batch = await fetchArticRandomPage(24);
       setItems((prev) => (isInitial ? (seenIds.current = new Set(batch.map((b) => b.id)), batch) : dedupeAppend(prev, batch)));
     } catch (err) {
-      setError(err.message || "Couldn't load artworks");
+      setError(friendlyError(err, "Couldn't load artworks"));
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -92,7 +93,7 @@ export default function ArtScreen({ onBack }) {
       seenIds.current = new Set(results.map((r) => r.id));
       setItems(results);
     } catch (err) {
-      setError(err.message || "Search failed");
+      setError(friendlyError(err, "Search failed"));
     } finally {
       setLoading(false);
     }

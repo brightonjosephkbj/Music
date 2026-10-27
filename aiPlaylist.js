@@ -1,3 +1,6 @@
+import { Alert } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system/legacy";
 import { authedHeaders, API_BASE, uploadBase64Image } from "./apiClient";
 import { buildTasteProfile } from "./listeningHistory";
 import { createPlaylist, addTrackToPlaylist, getDownloads, saveDownloads } from "./libraryStorage";
@@ -83,7 +86,7 @@ export async function resolveQuery(query, artistHint) {
 // backend endpoints return the same {playlist_name, queries, art_base64}
 // shape, so resolving queries to real tracks and saving them only needs
 // to live in one place.
-export async function resolvePlaylistFromAIData(data) {
+async function resolvePlaylistFromCatalog(data) {
   const { playlist_name, queries, art_base64 } = data;
 
   const resolved = [];
@@ -156,4 +159,233 @@ export async function generateAIPlaylist() {
   }
 
   return resolvePlaylistFromAIData(data);
+}
+
+
+// ---------------------------------------------------------------------------
+// AI playlists are downloaded by the server (Api-cache worker pool) so they get
+// real, playable files instead of whatever the free catalogs happen to have.
+// Falls back to the old catalog search if the server can't be reached.
+// ---------------------------------------------------------------------------
+const AI_POLL_MS = 8000;
+const AI_POLL_MAX_MS = 15 * 60 * 1000;
+const AI_FIRST_WAIT_MS = 0;
+const aiSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function resolvePlaylistFromAIData(data) {
+  try {
+    return await resolvePlaylistViaServer(data);
+  } catch (err) {
+    console.warn("Server download of AI playlist failed, using catalog search:", err.message);
+    Alert.alert("AI playlist", "Server download failed, using the old search instead.\n\n" + err.message);
+    return resolvePlaylistFromCatalog(data);
+  }
+}
+
+async function resolvePlaylistViaServer(data) {
+  const { playlist_name, queries, art_base64 } = data;
+  if (!queries || queries.length === 0) throw new Error("no queries");
+
+  const res = await fetch(`${API_BASE}/api/downloads/playlist/ai-download`, {
+    method: "POST",
+    headers: await authedHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ queries, playlist_name }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.ok) throw new Error(body.error || `server ${res.status}`);
+  const serverPlaylistId = body.data.playlist_id;
+
+  let artworkUrl = null;
+  if (art_base64) {
+    try {
+      artworkUrl = await uploadBase64Image(art_base64, "playlist_art");
+    } catch (err) {
+      console.warn("Playlist art upload failed, continuing without art:", err.message);
+    }
+  }
+
+  const playlist = await createPlaylist(playlist_name || "Made for you", artworkUrl);
+  await rememberAILink(playlist.id, serverPlaylistId, artworkUrl);
+
+  let firstBatchDone;
+  const firstReady = new Promise((resolve) => { firstBatchDone = resolve; });
+  fillPlaylistFromServer(serverPlaylistId, playlist.id, artworkUrl, firstBatchDone)
+    .catch((err) => console.warn("AI playlist fill stopped:", err.message));
+
+  await Promise.race([firstReady, aiSleep(AI_FIRST_WAIT_MS)]);
+  return playlist;
+}
+
+// Songs live on the server behind a login, which the player cannot send, so
+// each finished song is downloaded to the phone and played from the local file.
+async function downloadServerFile(fileId) {
+  const dest = FileSystem.documentDirectory + `ai-${fileId}.mp3`;
+  const info = await FileSystem.getInfoAsync(dest);
+  if (info.exists && info.size > 1000) return dest;
+  const res = await FileSystem.downloadAsync(
+    `${API_BASE}/api/downloads/files/${fileId}/view`,
+    dest,
+    { headers: await authedHeaders() }
+  );
+  if (res.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+    throw new Error(`download ${res.status}`);
+  }
+  return res.uri;
+}
+
+// Songs added by the earlier version have no local file; fetch them now.
+async function repairServerSongs() {
+  const list = await getDownloads();
+  let changed = false;
+  const next = [];
+  for (const d of list) {
+    if (d.source === "server" && !d.localUri) {
+      const m = /^server-(\d+)$/.exec(d.id || "");
+      if (m) {
+        try {
+          const uri = await downloadServerFile(m[1]);
+          next.push({ ...d, localUri: uri, download_url: `${API_BASE}/api/downloads/files/${m[1]}/view` });
+          changed = true;
+          continue;
+        } catch {}
+      }
+    }
+    next.push(d);
+  }
+  if (changed) await saveDownloads(next);
+}
+
+const AI_LINKS_KEY = "ai_playlist_server_links";
+const AI_LINK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const activeFills = new Set();
+const syncing = new Set();
+
+async function getAILinks() {
+  try {
+    return JSON.parse((await AsyncStorage.getItem(AI_LINKS_KEY)) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+async function setAILinks(links) {
+  try {
+    await AsyncStorage.setItem(AI_LINKS_KEY, JSON.stringify(links));
+  } catch {}
+}
+
+async function rememberAILink(playlistId, serverId, artwork) {
+  const links = await getAILinks();
+  links[playlistId] = { serverId, artwork: artwork || null, added: [], createdAt: Date.now() };
+  await setAILinks(links);
+}
+
+// One pass: add every finished server song that is not in the playlist yet.
+async function syncServerPlaylistOnce(playlistId) {
+  let links = await getAILinks();
+  const link = links[playlistId];
+  if (!link) return { added: 0, finished: true };
+  if (syncing.has(playlistId)) return { added: 0, finished: false };
+  syncing.add(playlistId);
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/downloads/playlist/status?playlist_id=${encodeURIComponent(link.serverId)}`,
+      { headers: await authedHeaders() }
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.ok) throw new Error(body.error || `server ${res.status}`);
+    const rows = body.data || [];
+
+    let failed = 0;
+    let lastDlError = "";
+    const doneRows = rows.filter((r) => r.status === "done" && r.file_id && !link.added.includes(r.file_id));
+    if (doneRows.length > 0) {
+      const existing = await getDownloads();
+      const existingKeys = new Set(existing.map((d) => d.id));
+      const entries = [];
+      for (const r of doneRows) {
+        const key = `server-${r.file_id}`;
+        let localUri = null;
+        try {
+          localUri = await downloadServerFile(r.file_id);
+        } catch (err) {
+          failed++;
+          lastDlError = err.message;
+          console.warn("AI playlist song download failed, will retry:", err.message);
+          continue;
+        }
+        if (!existingKeys.has(key)) {
+          entries.push({
+            id: key,
+            type: "audio",
+            title: r.title,
+            artist: r.artist,
+            artwork: r.art_url || link.artwork || null,
+            localUri,
+            download_url: `${API_BASE}/api/downloads/files/${r.file_id}/view`,
+            duration: 0,
+            source: "server",
+            addedAt: Date.now(),
+          });
+        }
+        await addTrackToPlaylist(playlistId, key);
+        link.added.push(r.file_id);
+      }
+      if (entries.length > 0) await saveDownloads([...existing, ...entries]);
+    }
+
+    const working = rows.some((r) => r.status === "pending" || r.status === "downloading");
+    const stale = Date.now() - link.createdAt > AI_LINK_MAX_AGE_MS;
+    const finished = rows.length === 0 || (!working && failed === 0) || stale;
+
+    if (finished && link.added.length === 0 && rows.length > 0) {
+      const errs = rows.filter((r) => r.status === "failed" && r.error).map((r) => r.error);
+      Alert.alert("AI playlist", "No songs could be added.\n\n" +
+        (lastDlError ? "Saving to the phone failed: " + lastDlError : (errs[0] || "Server downloads did not finish.")));
+    }
+    links = await getAILinks();
+    if (finished) delete links[playlistId];
+    else links[playlistId] = link;
+    await setAILinks(links);
+    return { added: doneRows.length - failed, finished };
+  } finally {
+    syncing.delete(playlistId);
+  }
+}
+
+async function fillPlaylistFromServer(serverPlaylistId, playlistId, artwork, onFirstBatch) {
+  activeFills.add(playlistId);
+  const start = Date.now();
+  try {
+    while (Date.now() - start < AI_POLL_MAX_MS) {
+      await aiSleep(AI_POLL_MS);
+      let state;
+      try {
+        state = await syncServerPlaylistOnce(playlistId);
+      } catch {
+        continue;
+      }
+      if (state.added > 0) onFirstBatch();
+      if (state.finished) break;
+    }
+  } finally {
+    activeFills.delete(playlistId);
+    onFirstBatch();
+  }
+}
+
+// Call when the app opens or comes back to the foreground: adds every song
+// that finished while the app was closed.
+export async function resumeAIPlaylists() {
+  try { await repairServerSongs(); } catch (err) { console.warn("Repair of AI songs failed:", err.message); }
+  const links = await getAILinks();
+  for (const playlistId of Object.keys(links)) {
+    if (activeFills.has(playlistId)) continue;
+    try {
+      await syncServerPlaylistOnce(playlistId);
+    } catch (err) {
+      console.warn("Resume of AI playlist failed:", err.message);
+    }
+  }
 }

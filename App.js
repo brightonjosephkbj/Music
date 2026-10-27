@@ -1,3 +1,4 @@
+import "./gatewayFallback";
 import "react-native-gesture-handler"; // must be the very first import, before anything else
 
 import React, { useState, useEffect, useRef } from "react";
@@ -5,8 +6,10 @@ import { StatusBar } from "expo-status-bar";
 import { View, ActivityIndicator } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AppShell from "./AppShell";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import HomeScreen from "./HomeScreen";
 import LibraryScreen from "./LibraryScreen";
+import useOtaCheck from "./useOtaCheck";
 import NewsScreen from "./NewsScreen";
 import RestScreen from "./RestScreen";
 import usePlaybackEngine from "./usePlaybackEngine";
@@ -41,10 +44,25 @@ import { registerPushToken } from "./apiClient";
 import { listFriends } from "./shareClient";
 import LoginScreen, { getStoredAuth, clearStoredAuth, updateStoredAuth } from "./LoginScreen";
 import { generateAIPlaylist } from "./aiPlaylist";
+import { tokenExpired } from "./authExpiry";
+import { setReportScreen } from "./errorReporter";
+import useAppResume from "./useAppResume";
 import { registerPlaybackControls, initMediaControls } from "./playbackBridge";
 import { updateNowPlayingWidget } from "./nowPlayingWidget";
 import { fetchLyrics, activeLyricIndex } from "./lyricsClient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// Position updates re-render App several times a second. These keep the heavy
+// screens from re-rendering on every tick: memoized screens + callbacks whose
+// identity never changes (they always call the latest version underneath).
+const LibraryScreenMemo = React.memo(LibraryScreen);
+const SearchScreenMemo = React.memo(SearchScreen);
+function useStableFn(fn) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  const stable = useRef((...args) => ref.current(...args));
+  return stable.current;
+}
 
 // Device-scanned tracks skip ID3 reading in bulk (see localMediaScanner.js -
 // hundreds of native-bridge calls at once was the actual lag source). So
@@ -90,7 +108,11 @@ export default function App() {
   const [authResolved, setAuthResolved] = useState(false);
 
   useEffect(() => {
-    getStoredAuth().then((user) => {
+    getStoredAuth().then(async (user) => {
+      if (user?.token && tokenExpired(user.token)) {
+        await clearStoredAuth();
+        user = null;
+      }
       setAuthUser(user);
       setAuthResolved(true);
     });
@@ -104,9 +126,25 @@ export default function App() {
   };
 
   const [activeNav, setActiveNav] = useState("home");
+  useOtaCheck();
   const [activeDrawerScreen, setActiveDrawerScreen] = useState(null); // e.g. "news"
   const [selectedShareFriend, setSelectedShareFriend] = useState(null); // friend for ShareThreadScreen
   const [nowPlaying, setNowPlaying] = useState(null); // track object
+
+  // Tells the error reporter which screen is showing.
+  useEffect(() => {
+    setReportScreen(activeDrawerScreen || activeNav);
+  }, [activeDrawerScreen, activeNav]);
+
+  // An expired login makes every server call fail quietly, so sign out
+  // cleanly when the app comes back and the token has run out.
+  useAppResume(() => {
+    getStoredAuth()
+      .then((u) => {
+        if (u?.token && tokenExpired(u.token)) handleSignOut();
+      })
+      .catch(() => {});
+  }, 15000);
 
   // Push the current track to the home screen widget whenever it changes -
   // no-op if the widget isn't placed on any home screen.
@@ -432,6 +470,10 @@ export default function App() {
   const expandPlayer = () => setPlayerExpanded(true);
   const collapsePlayer = () => setPlayerExpanded(false);
 
+  const stablePlayTrack = useStableFn(playTrack);
+  const stableGoSearch = useStableFn(() => setActiveNav("search"));
+  const stableGoMostPlayed = useStableFn(() => goToDrawerScreen("mostPlayed"));
+
   let content;
   if (activeDrawerScreen === "news") {
     content = <NewsScreen onBack={backFromDrawerScreen} />;
@@ -493,10 +535,10 @@ export default function App() {
         engine={engine}
       />
     );
-  } else if (activeNav === "library") {
-    content = <LibraryScreen onTrackPress={playTrack} onSearchPress={() => setActiveNav("search")} onMostPlayedPress={() => goToDrawerScreen("mostPlayed")} />;
+  } else if (activeNav === "library" || activeNav === "videos" || activeNav === "downloads") {
+    content = <LibraryScreenMemo section={activeNav === "videos" ? "Videos" : activeNav === "downloads" ? "Downloads" : undefined} onTrackPress={stablePlayTrack} onSearchPress={stableGoSearch} onMostPlayedPress={stableGoMostPlayed} />;
   } else if (activeNav === "search") {
-    content = <SearchScreen onTrackPress={playTrack} />;
+    content = <SearchScreenMemo onTrackPress={stablePlayTrack} />;
   } else if (activeNav === "settings") {
     content = (
       <SettingsScreen
@@ -530,9 +572,15 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
       <DownloadsProvider>
         <AppShell
           activeNav={activeNav}
+          screenKey={
+            activeDrawerScreen
+              ? `${activeDrawerScreen}:${selectedShareFriend ? "thread" : "list"}`
+              : activeNav
+          }
           onNavPress={setActiveNav}
           nowPlaying={nowPlaying}
           engine={engine}
@@ -578,6 +626,7 @@ export default function App() {
 
       <StatusBar style="light" />
     </DownloadsProvider>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

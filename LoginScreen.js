@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useRef } from "react";
 import {
   View,
@@ -194,7 +195,7 @@ export default function LoginScreen({ onAuthenticated, allowGuest = true }) {
         onAuthenticated?.(user);
       }
     } catch (e) {
-      setError(e.message || "Something went wrong");
+      setError(friendlyError(e, "Something went wrong"));
     } finally {
       setLoading(false);
     }

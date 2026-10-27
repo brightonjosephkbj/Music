@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -25,6 +26,7 @@ import { authedHeaders } from "./apiClient";
 import { lightningExtract } from "./urlFetchClient";
 import { buildLibraryFilename } from "./libraryFileNaming";
 import { saveDownloadToSharedStorage } from "./mediaLibrarySave";
+import { reportScrollY } from "./shellScroll";
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
 const JET_BLACK = "#1D1D1D";
@@ -200,7 +202,7 @@ export default function SearchScreen({ onTrackPress }) {
 
       syncDownloadedIds(catList, ytList);
     } catch (err) {
-      setError(err.message || "Search failed");
+      setError(friendlyError(err, "Search failed"));
       setCategories({});
       setYtResults([]);
     } finally {
@@ -283,7 +285,7 @@ export default function SearchScreen({ onTrackPress }) {
       await saveDownloads([...existing, entry]);
       setDownloadedIds((prev) => new Set(prev).add(key));
     } catch (err) {
-      if (!isCancelled(key)) setError(err.message || "Download failed");
+      if (!isCancelled(key)) setError(friendlyError(err, "Download failed"));
     } finally {
       setDownloadingKey(null);
       finishDownload(key);
@@ -304,7 +306,7 @@ export default function SearchScreen({ onTrackPress }) {
       // unlike the raw fetch this used to do here.
       return await lightningExtract(ytItem.url, option.mode, option.quality);
     } catch (err) {
-      setError(err.message || "Could not load that track");
+      setError(friendlyError(err, "Could not load that track"));
       return null;
     } finally {
       setResolvingIds((prev) => {
@@ -399,7 +401,7 @@ export default function SearchScreen({ onTrackPress }) {
       await addDownloadEntry(entry);
       setDownloadedIds((prev) => new Set(prev).add(key));
     } catch (err) {
-      if (!isCancelled(key)) setError(err.message || "Download failed");
+      if (!isCancelled(key)) setError(friendlyError(err, "Download failed"));
     } finally {
       setDownloadingKey(null);
       finishDownload(key);
@@ -590,7 +592,7 @@ export default function SearchScreen({ onTrackPress }) {
       <HomeBackground />
       
       
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Search</Text>
 
         <View style={styles.inputRow}>
@@ -805,9 +807,10 @@ export default function SearchScreen({ onTrackPress }) {
   );
 }
 
+const TOP_PAD = ((require("react-native").StatusBar.currentHeight) || 24) + 32; // real status-bar height
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: JET_BLACK },
-  content: { paddingTop: 56, paddingHorizontal: 20, paddingBottom: 150 },
+  content: { paddingTop: TOP_PAD, paddingHorizontal: 20, paddingBottom: 150 },
 
   orb: { position: "absolute", borderRadius: 999, backgroundColor: ORCHID },
   orb1: { top: -60, left: -60, width: 250, height: 250, opacity: 0.1 },

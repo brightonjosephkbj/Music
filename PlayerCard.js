@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
+import { friendlyError } from "./friendlyError";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -13,10 +14,10 @@ import {
   Modal,
   FlatList,
   StatusBar,
+  Platform,
   useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import * as FileSystem from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library/legacy";
 import { getCurrentUser, listFriends, sendShare } from "./shareClient";
@@ -24,12 +25,27 @@ import { addDownload, isDownloaded } from "./libraryStorage";
 import { buildLibraryFilename, B24_ALBUM_NAME } from "./libraryFileNaming";
 import { gatewayHeaders } from "./apiClient";
 import { fetchLyrics, activeLyricIndex } from "./lyricsClient";
-import useArtworkAccent from "./useArtworkAccent";
+import ConfigureAudioScreen from "./ConfigureAudioScreen";
+import { trackKey } from "./audioSettings";
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
-const TABS = ["Song", "Lyrics", "Related"];
+const CARD_TABS = ["Up next", "Lyrics", "Related"];
 const SLEEP_OPTIONS = [null, 15, 30, 45, 60];
 const RATES = [1, 1.25, 1.5, 2, 0.75];
+let SAVED_RATE = 1;
+const BARS = 56;
+
+// Bone paper + ink + signal orange. No shadows, no elevation.
+const C = {
+  bg: "#F2EFE8",
+  ink: "#16140F",
+  muted: "#6B665C",
+  line: "#D9D4C7",
+  chip: "#E6E1D6",
+  accent: "#E8472B",
+  accentText: "#B8341A",
+  bar: "#CFC9BB",
+};
 
 function formatTime(sec) {
   if (!sec && sec !== 0) return "0:00";
@@ -45,23 +61,20 @@ function hashStr(str) {
   return Math.abs(h);
 }
 
-// Accent colour derived from the song (stable per track).
-function trackAccent(track) {
-  const key = `${track?.provider || ""}-${track?.id || ""}-${track?.title || ""}`;
-  const h = hashStr(key) % 360;
-  return {
-    solid: `hsl(${h},85%,70%)`,
-    glow: `hsl(${h},95%,58%)`,
-    soft: `hsla(${h},85%,60%,0.16)`,
-    tint: `hsla(${h},80%,45%,0.38)`,
-  };
+// Stable pseudo-waveform per track (streams give no real peak data).
+function waveBars(seed) {
+  const base = hashStr(seed || "x") || 1;
+  let h = base;
+  const out = [];
+  for (let i = 0; i < BARS; i++) {
+    h = (Math.imul(h, 1664525) + 1013904223) | 0;
+    const r = ((h >>> 8) & 255) / 255;
+    const env = 0.5 + 0.5 * Math.sin(i * 0.22 + (base % 7));
+    out.push(Math.round(8 + 30 * (0.4 * r + 0.6 * env)));
+  }
+  return out;
 }
 
-// track: normalized track object (title, artist, artwork, provider, id).
-// engine: result of usePlaybackEngine(track).
-// onCollapse: minimise back to the mini player.
-// onNext / onPrev: skip within the queue held in App.js.
-// onPlayTrack: play a specific track (e.g. a tapped related-track result).
 export default function PlayerCard({
   track,
   engine,
@@ -77,42 +90,100 @@ export default function PlayerCard({
 }) {
   const { width: W, height: H } = useWindowDimensions();
   const topPad = (StatusBar.currentHeight || 28) + 6;
-  const coverSize = Math.min(W - 64, H * 0.4);
-  const A = useArtworkAccent(track?.artwork, trackAccent(track));
+  const NAV_CLEAR = Platform.OS === "android" ? 44 : 0;
 
-  const [panel, setPanel] = useState(1);
+  // Cover is sized from the space it actually gets (no hard-coded estimate).
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const coverSize = Math.max(100, Math.min(box.w, box.h));
+
+  const [panel, setPanel] = useState(0);
   const scrollRef = useRef(null);
   const lyricsScrollRef = useRef(null);
   const lineYs = useRef([]);
 
   const [sleepMinutes, setSleepMinutes] = useState(null);
   const sleepTimerRef = useRef(null);
-  const [playbackRate, setPlaybackRate] = useState(1);
+  const sleepEndRef = useRef(null);
+  const [showConfig, setShowConfig] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(SAVED_RATE);
   const [shuffleOn, setShuffleOn] = useState(!!initialShuffleOn);
 
   const [lyrics, setLyrics] = useState([]);
   const [lyricsLoading, setLyricsLoading] = useState(true);
   const [hasSynced, setHasSynced] = useState(false);
+  const [lyricDisplayMode, setLyricDisplayMode] = useState("line");
 
   const [related, setRelated] = useState([]);
   const [relatedLoading, setRelatedLoading] = useState(true);
 
   const [libDownloading, setLibDownloading] = useState(false);
   const [libDownloaded, setLibDownloaded] = useState(false);
-  const [libProgress, setLibProgress] = useState(0);
 
   const [shareSheetVisible, setShareSheetVisible] = useState(false);
   const [shareFriends, setShareFriends] = useState([]);
   const [shareLoading, setShareLoading] = useState(false);
   const [sharingToId, setSharingToId] = useState(null);
 
-  // Always-current values for the PanResponders (they are created once).
+  // Always-current values for PanResponders (created once).
   const L = useRef({});
   L.current = { engine, onCollapse, onNext, onPrev, height: H };
 
   const dragY = useRef(new Animated.Value(0)).current;
   const playScale = useRef(new Animated.Value(1)).current;
-  const breathe = useRef(new Animated.Value(1)).current;
+
+  // Smooth entrance when the expanded player mounts.
+  // Keep dragY separate so existing swipe gestures continue to work.
+  const entranceOpacity = useRef(new Animated.Value(0)).current;
+  const entranceY = useRef(new Animated.Value(26)).current;
+  const coverOpacity = useRef(new Animated.Value(0)).current;
+  const coverScale = useRef(new Animated.Value(0.92)).current;
+  const detailsOpacity = useRef(new Animated.Value(0)).current;
+  const detailsY = useRef(new Animated.Value(14)).current;
+
+  useEffect(() => {
+    const entrance = Animated.parallel([
+      Animated.timing(entranceOpacity, {
+        toValue: 1,
+        duration: 240,
+        useNativeDriver: true,
+      }),
+      Animated.spring(entranceY, {
+        toValue: 0,
+        speed: 18,
+        bounciness: 3,
+        useNativeDriver: true,
+      }),
+      Animated.timing(coverOpacity, {
+        toValue: 1,
+        duration: 320,
+        delay: 70,
+        useNativeDriver: true,
+      }),
+      Animated.spring(coverScale, {
+        toValue: 1,
+        speed: 14,
+        bounciness: 4,
+        delay: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(detailsOpacity, {
+        toValue: 1,
+        duration: 260,
+        delay: 120,
+        useNativeDriver: true,
+      }),
+      Animated.spring(detailsY, {
+        toValue: 0,
+        speed: 16,
+        bounciness: 3,
+        delay: 100,
+        useNativeDriver: true,
+      }),
+    ]);
+
+    entrance.start();
+    return () => entrance.stop();
+  }, [entranceOpacity, entranceY, coverOpacity, coverScale, detailsOpacity, detailsY]);
 
   // ---------------- Downloaded state ----------------
   useEffect(() => {
@@ -132,27 +203,19 @@ export default function PlayerCard({
     const uri = track.download_url || track.stream_url;
     if (!uri) return;
     const key = `${track.provider}-${track.id}`;
+    let tempUri = null;
     setLibDownloading(true);
-    setLibProgress(0);
     try {
-      const filename = buildLibraryFilename(track.title, track.artist, key);
-      const tempUri = FileSystem.cacheDirectory + filename;
-      const resumable = FileSystem.createDownloadResumable(uri, tempUri, {}, (p) => {
-        setLibProgress(
-          p.totalBytesExpectedToWrite > 0 ? p.totalBytesWritten / p.totalBytesExpectedToWrite : 0
-        );
-      });
-      await resumable.downloadAsync();
-
       const perm = await MediaLibrary.requestPermissionsAsync();
       if (!perm.granted) throw new Error("Storage permission is required to save songs permanently");
+      const filename = buildLibraryFilename(track.title, track.artist, key);
+      tempUri = FileSystem.cacheDirectory + filename;
+      await FileSystem.createDownloadResumable(uri, tempUri).downloadAsync();
 
       const asset = await MediaLibrary.createAssetAsync(tempUri);
       let album = await MediaLibrary.getAlbumAsync(B24_ALBUM_NAME);
       if (album) await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
       else album = await MediaLibrary.createAlbumAsync(B24_ALBUM_NAME, asset, false);
-
-      await FileSystem.deleteAsync(tempUri, { idempotent: true });
 
       await addDownload({
         id: key,
@@ -169,26 +232,10 @@ export default function PlayerCard({
     } catch (err) {
       Alert.alert("Download failed", err?.message || "Try again.");
     } finally {
+      if (tempUri) FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
       setLibDownloading(false);
     }
   };
-
-  // ---------------- Breathing cover while playing ----------------
-  useEffect(() => {
-    let loop;
-    if (engine?.isPlaying) {
-      loop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(breathe, { toValue: 1.025, duration: 1800, useNativeDriver: true }),
-          Animated.timing(breathe, { toValue: 1, duration: 1800, useNativeDriver: true }),
-        ])
-      );
-      loop.start();
-    } else {
-      breathe.setValue(1);
-    }
-    return () => loop && loop.stop();
-  }, [engine?.isPlaying]);
 
   // ---------------- Lyrics ----------------
   useEffect(() => {
@@ -212,6 +259,27 @@ export default function PlayerCard({
 
   const currentLineIndex = hasSynced ? activeLyricIndex(lyrics, engine?.position || 0) : -1;
   const currentLine = currentLineIndex >= 0 ? lyrics[currentLineIndex]?.text : null;
+
+  // Estimate word timing between consecutive line timestamps.
+  // True word synchronization requires word-level timestamps from the source.
+  const currentWordIndex = (() => {
+    if (lyricDisplayMode !== "word" || currentLineIndex < 0) return -1;
+
+    const line = lyrics[currentLineIndex];
+    const words = String(line?.text || "").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return -1;
+
+    const position = Number(engine?.position) || 0;
+    const start = Number(line?.time) || 0;
+    const nextTime = Number(lyrics[currentLineIndex + 1]?.time);
+    const fallbackDuration = Math.max(2, words.length * 0.35);
+    const end = Number.isFinite(nextTime) && nextTime > start
+      ? nextTime
+      : start + fallbackDuration;
+
+    const progress = Math.max(0, Math.min(0.999999, (position - start) / (end - start)));
+    return Math.min(words.length - 1, Math.floor(progress * words.length));
+  })();
 
   useEffect(() => {
     if (panel !== 1 || currentLineIndex < 0 || !lyricsScrollRef.current) return;
@@ -257,20 +325,20 @@ export default function PlayerCard({
         onPlayTrack(found);
         closeSheet();
       }
-    } catch {}
+    } catch (e) {
+      Alert.alert("Couldn't play", friendlyError(e, "Try again."));
+    }
   };
 
-  // ---------------- Tabs ----------------
-  // SHEET_V2
-  const CARD_TABS = ["Up Next", "Lyrics", "Related"];
-  const CARD_PEEK = 78;
+  // ---------------- Bottom sheet (native-driven translateY) ----------------
+  const PEEK = 64 + NAV_CLEAR;
+  const openTop = topPad + 56;
+  const SHEET_H = H - openTop;
+  const sheetRange = SHEET_H - PEEK;
   const sheet = useRef(new Animated.Value(0)).current;
   const sheetVal = useRef(0);
   const sheetStart = useRef(0);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const openTop = topPad + 48 + 72;
-  const closedTop = H - CARD_PEEK;
-  const sheetRange = closedTop - openTop;
 
   useEffect(() => {
     const id = sheet.addListener(({ value }) => {
@@ -281,7 +349,7 @@ export default function PlayerCard({
   }, []);
 
   const animateSheet = (to) =>
-    Animated.spring(sheet, { toValue: to, useNativeDriver: false, bounciness: 3, speed: 14 }).start();
+    Animated.spring(sheet, { toValue: to, useNativeDriver: true, bounciness: 3, speed: 14 }).start();
   const closeSheet = () => animateSheet(0);
 
   const goToPanel = (idx) => {
@@ -318,21 +386,17 @@ export default function PlayerCard({
     })
   ).current;
 
-  const coverScale = sheet.interpolate({ inputRange: [0, 1], outputRange: [1, 52 / coverSize] });
-  const coverTx = sheet.interpolate({ inputRange: [0, 1], outputRange: [0, 46 - W / 2] });
-  const coverTy = sheet.interpolate({ inputRange: [0, 1], outputRange: [0, 16 - coverSize / 2] });
-  const coverOpacity = sheet.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 1, 0], extrapolate: "clamp" });
-  const restOpacity = sheet.interpolate({ inputRange: [0, 0.35], outputRange: [1, 0], extrapolate: "clamp" });
-  const miniOpacity = sheet.interpolate({ inputRange: [0.5, 1], outputRange: [0, 1], extrapolate: "clamp" });
-  const cardTop = sheet.interpolate({ inputRange: [0, 1], outputRange: [closedTop, openTop] });
+  const cardY = sheet.interpolate({ inputRange: [0, 1], outputRange: [sheetRange, 0] });
+  const pageOpacity = sheet.interpolate({ inputRange: [0, 0.4], outputRange: [1, 0], extrapolate: "clamp" });
 
-  // ---------------- Seek bar (draggable) ----------------
+  // ---------------- Waveform seek (draggable) ----------------
   const trackRef = useRef(null);
   const trackPageX = useRef(0);
   const trackW = useRef(0);
   const scrubRef = useRef(0);
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubPct, setScrubPct] = useState(0);
+  const bars = useMemo(() => waveBars(`${track?.provider}-${track?.id}`), [track?.id, track?.provider]);
 
   const measureTrack = () => {
     if (!trackRef.current) return;
@@ -372,8 +436,7 @@ export default function PlayerCard({
     })
   ).current;
 
-  // ---------------- Swipe gestures on the song page ----------------
-  // down = minimise, left = next, right = previous
+  // ---------------- Swipes on the main page: down = minimise, left = next, right = previous ----------------
   const pagePan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
@@ -386,6 +449,7 @@ export default function PlayerCard({
         const ay = Math.abs(g.dy);
         if (ay > ax && (g.dy < -50 || g.vy < -0.7)) {
           L.current.animateSheet && L.current.animateSheet(1);
+          Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
           return;
         }
         if (ay > ax && (g.dy > 120 || g.vy > 0.8)) {
@@ -414,8 +478,8 @@ export default function PlayerCard({
   // ---------------- Controls ----------------
   const onPlayPausePress = () => {
     Animated.sequence([
-      Animated.timing(playScale, { toValue: 0.85, duration: 90, useNativeDriver: true }),
-      Animated.spring(playScale, { toValue: 1, useNativeDriver: true, bounciness: 10 }),
+      Animated.timing(playScale, { toValue: 0.9, duration: 90, useNativeDriver: true }),
+      Animated.spring(playScale, { toValue: 1, useNativeDriver: true, bounciness: 8 }),
     ]).start();
     engine?.toggle();
   };
@@ -426,19 +490,21 @@ export default function PlayerCard({
     onShuffleToggle && onShuffleToggle(next);
   };
 
+  const stopForSleep = () => {
+    const eng = L.current.engine;
+    if (eng?.isPlaying) eng.toggle();
+    sleepEndRef.current = null;
+    setSleepMinutes(null);
+  };
+
   const applySleepTimer = (minutes) => {
     if (sleepTimerRef.current) {
       clearTimeout(sleepTimerRef.current);
       sleepTimerRef.current = null;
     }
     setSleepMinutes(minutes);
-    if (minutes !== null) {
-      sleepTimerRef.current = setTimeout(() => {
-        const eng = L.current.engine;
-        if (eng?.isPlaying) eng.toggle();
-        setSleepMinutes(null);
-      }, minutes * 60 * 1000);
-    }
+    sleepEndRef.current = minutes !== null ? Date.now() + minutes * 60000 : null;
+    if (minutes !== null) sleepTimerRef.current = setTimeout(stopForSleep, minutes * 60000);
   };
 
   const cycleSleepTimer = () => {
@@ -446,14 +512,27 @@ export default function PlayerCard({
     applySleepTimer(SLEEP_OPTIONS[(idx + 1) % SLEEP_OPTIONS.length]);
   };
 
+  // Backup: a throttled timer can't leave music playing past the deadline.
+  useEffect(() => {
+    const end = sleepEndRef.current;
+    if (end && Date.now() >= end) stopForSleep();
+  }, [engine?.position]);
+
   useEffect(() => {
     return () => {
       if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current);
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      if (typeof L.current.engine?.setRate === "function") L.current.engine.setRate(SAVED_RATE);
+    } catch (e) {}
+  }, [track?.id, track?.provider]);
+
   const cycleSpeed = () => {
     const next = RATES[(RATES.indexOf(playbackRate) + 1) % RATES.length];
+    SAVED_RATE = next;
     setPlaybackRate(next);
     if (typeof engine?.setRate === "function") engine.setRate(next);
   };
@@ -464,10 +543,10 @@ export default function PlayerCard({
     setShareLoading(true);
     try {
       const u = await getCurrentUser();
-      if (!u?.id) return;
+      if (!u?.id) throw new Error("Please sign in first.");
       setShareFriends(await listFriends(u.id));
     } catch (e) {
-      Alert.alert("Couldn't load friends", e.message || "Try again.");
+      Alert.alert("Couldn't load friends", friendlyError(e, "Try again."));
     } finally {
       setShareLoading(false);
     }
@@ -478,7 +557,7 @@ export default function PlayerCard({
     setSharingToId(friend.id);
     try {
       const u = await getCurrentUser();
-      if (!u?.id) return;
+      if (!u?.id) throw new Error("Please sign in first.");
       await sendShare(u.id, friend.id, {
         item_type: "track",
         item_id: track.id,
@@ -494,7 +573,7 @@ export default function PlayerCard({
     } catch (e) {
       Alert.alert(
         "Share failed",
-        e.code === "not_friends" ? "You need to be friends to share." : e.message || "Failed to share."
+        e.code === "not_friends" ? "You need to be friends to share." : friendlyError(e, "Failed to share.")
       );
     } finally {
       setSharingToId(null);
@@ -508,224 +587,194 @@ export default function PlayerCard({
     : duration
     ? Math.min(1, (engine?.position || 0) / duration)
     : 0;
+
+  // Smooth waveform progress instead of abruptly switching bars.
+  const waveProgress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    waveProgress.stopAnimation();
+    if (scrubbing) {
+      waveProgress.setValue(scrubPct);
+    } else {
+      Animated.timing(waveProgress, {
+        toValue: progressPct,
+        duration: 180,
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [progressPct, scrubPct, scrubbing, waveProgress]);
+
   const shownPos = scrubbing ? scrubPct * duration : engine?.position || 0;
+  const posLabel = queue && queue.length > 0 && queueIndex >= 0 ? `${queueIndex + 1} / ${queue.length}` : "";
 
   // ---------------- UI ----------------
   return (
-    <Animated.View style={[styles.root, { transform: [{ translateY: dragY }] }]}>
-      {!!track?.artwork && (
-        <Image
-          source={{ uri: track.artwork }}
-          blurRadius={45}
-          style={[StyleSheet.absoluteFill, { opacity: 0.55 }]}
-        />
-      )}
-      <LinearGradient
-        pointerEvents="none"
-        colors={["rgba(8,10,16,0.35)", "rgba(8,10,16,0.88)", "#080A10"]}
-        style={StyleSheet.absoluteFill}
-      />
-      <LinearGradient
-        pointerEvents="none"
-        colors={[A.tint, "transparent"]}
-        style={{ position: "absolute", top: 0, left: 0, right: 0, height: 380 }}
-      />
-
+    <Animated.View style={[styles.root, { opacity: entranceOpacity, transform: [{ translateY: Animated.add(dragY, entranceY) }] }]}>
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: topPad }]}>
         <TouchableOpacity
           onPress={() => (sheetOpen ? closeSheet() : onCollapse && onCollapse())}
-          style={styles.roundBtn}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={styles.iconBtn}
+          accessibilityLabel="Minimise player"
         >
-          <Ionicons name="chevron-down" size={22} color="#fff" />
+          <Ionicons name="chevron-down" size={26} color={C.ink} />
         </TouchableOpacity>
-        <Text style={styles.topTitle}>Now Playing</Text>
-        <TouchableOpacity
-          onPress={openShareSheet}
-          style={styles.roundBtn}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="share-outline" size={19} color="#fff" />
+        <View style={{ alignItems: "center" }}>
+          <Text style={styles.eyebrow}>Now playing</Text>
+          {!!posLabel && <Text style={styles.topSub}>{posLabel}</Text>}
+        </View>
+        <TouchableOpacity onPress={openShareSheet} style={styles.iconBtn} accessibilityLabel="Send to a friend">
+          <Ionicons name="paper-plane-outline" size={22} color={C.ink} />
         </TouchableOpacity>
       </View>
 
-      {/* Song page */}
-      <View
-        style={{ flex: 1 }}
+      {/* Main page */}
+      <Animated.View
+        style={{ flex: 1, opacity: pageOpacity, paddingHorizontal: 24, paddingBottom: PEEK + 12 }}
         pointerEvents={sheetOpen ? "none" : "auto"}
         {...pagePan.panHandlers}
       >
-        <View style={[styles.panel, { width: W, flex: 1 }]}>
-          <Animated.View
-            style={{
-              opacity: coverOpacity,
-              transform: [{ translateX: coverTx }, { translateY: coverTy }, { scale: coverScale }],
-            }}
-          >
-            <Animated.View
-              style={[
-                styles.coverWrap,
-                { width: coverSize, height: coverSize, shadowColor: A.glow, transform: [{ scale: breathe }] },
-              ]}
-            >
-              {track?.artwork ? (
-                <Image source={{ uri: track.artwork }} style={styles.cover} />
-              ) : (
-                <View style={[styles.cover, styles.coverEmpty]}>
-                  <Ionicons name="musical-notes" size={64} color="rgba(255,255,255,0.4)" />
-                </View>
-              )}
-            </Animated.View>
-          </Animated.View>
-
-          <Animated.View style={{ width: "100%", alignItems: "center", opacity: restOpacity }}>
-            <View style={styles.titleRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.trackTitle} numberOfLines={2}>{track?.title}</Text>
-                <Text style={styles.trackArtist} numberOfLines={1}>{track?.artist}</Text>
-              </View>
-              <TouchableOpacity
-                onPress={downloadToLibrary}
-                disabled={libDownloading || libDownloaded}
-                style={styles.roundBtn}
-              >
-                {libDownloading ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : libDownloaded ? (
-                  <Ionicons name="checkmark" size={20} color={A.solid} />
-                ) : (
-                  <Ionicons name="download-outline" size={20} color="#fff" />
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {!!currentLine && (
-              <Text style={[styles.lyricPeek, { color: A.solid }]} numberOfLines={2}>
-                {currentLine}
-              </Text>
-            )}
-
-            <View style={styles.progressRow}>
-              <View
-                ref={trackRef}
-                onLayout={measureTrack}
-                style={[styles.progressTrack, scrubbing && { height: 6 }]}
-                hitSlop={{ top: 18, bottom: 18 }}
-                {...seekPan.panHandlers}
-              >
-                <View style={[styles.progressFill, { width: `${progressPct * 100}%`, backgroundColor: A.solid }]} />
-                <View
-                  style={[
-                    styles.progressDot,
-                    {
-                      left: `${progressPct * 100}%`,
-                      backgroundColor: A.solid,
-                      transform: [{ scale: scrubbing ? 1.35 : 1 }],
-                    },
-                  ]}
-                />
-              </View>
-              <View style={styles.timeRow}>
-                <Text style={styles.timeText}>{formatTime(shownPos)}</Text>
-                <Text style={styles.timeText}>{formatTime(duration)}</Text>
-              </View>
-            </View>
-
-            <View style={styles.controlsRow}>
-              <TouchableOpacity onPress={toggleShuffle} style={styles.sideBtn}>
-                <Ionicons name="shuffle" size={22} color={shuffleOn ? A.solid : "rgba(255,255,255,0.7)"} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => onPrev && onPrev()} style={styles.skipBtn}>
-                <Ionicons name="play-skip-back" size={30} color="#fff" />
-              </TouchableOpacity>
-              <Animated.View style={{ transform: [{ scale: playScale }] }}>
-                <TouchableOpacity
-                  onPress={onPlayPausePress}
-                  activeOpacity={0.85}
-                  style={[styles.playBtn, { backgroundColor: A.solid, shadowColor: A.glow }]}
-                >
-                  <Ionicons
-                    name={engine?.isPlaying ? "pause" : "play"}
-                    size={32}
-                    color="#101010"
-                    style={engine?.isPlaying ? undefined : { marginLeft: 3 }}
-                  />
-                </TouchableOpacity>
-              </Animated.View>
-              <TouchableOpacity onPress={() => onNext && onNext()} style={styles.skipBtn}>
-                <Ionicons name="play-skip-forward" size={30} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => goToPanel(0)} style={styles.sideBtn}>
-                <Ionicons name="list" size={22} color="rgba(255,255,255,0.7)" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.actionRow}>
-              <TouchableOpacity onPress={() => goToPanel(1)} style={styles.actionBtn}>
-                <Ionicons name="text" size={19} color="#fff" />
-                <Text style={styles.actionLabel}>Lyrics</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={cycleSleepTimer} style={styles.actionBtn}>
-                <Ionicons name={sleepMinutes ? "moon" : "moon-outline"} size={19} color={sleepMinutes ? A.solid : "#fff"} />
-                <Text style={[styles.actionLabel, sleepMinutes && { color: A.solid }]}>
-                  {sleepMinutes ? `${sleepMinutes}m` : "Sleep"}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={cycleSpeed} style={styles.actionBtn}>
-                <Ionicons name="speedometer-outline" size={19} color={playbackRate !== 1 ? A.solid : "#fff"} />
-                <Text style={[styles.actionLabel, playbackRate !== 1 && { color: A.solid }]}>{playbackRate}x</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={openShareSheet} style={styles.actionBtn}>
-                <Ionicons name="paper-plane-outline" size={19} color="#fff" />
-                <Text style={styles.actionLabel}>Send</Text>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
-        </View>
-      </View>
-
-      {/* Mini row (appears when card is open) */}
-      <Animated.View
-        pointerEvents={sheetOpen ? "auto" : "none"}
-        style={[styles.miniRow, { top: topPad + 48, opacity: miniOpacity }]}
-      >
-        <TouchableOpacity
-          onPress={closeSheet}
-          activeOpacity={0.8}
-          style={{ flexDirection: "row", alignItems: "center", flex: 1 }}
+        <View
+          style={[styles.coverBox, {
+            opacity: coverOpacity,
+            transform: [{ scale: coverScale }],
+          }]}
+          onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
         >
-          {track?.artwork ? (
-            <Image source={{ uri: track.artwork }} style={styles.miniArt} />
-          ) : (
-            <View style={[styles.miniArt, styles.coverEmpty]}>
-              <Ionicons name="musical-notes" size={22} color="rgba(255,255,255,0.4)" />
-            </View>
-          )}
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.miniTitle} numberOfLines={1}>{track?.title}</Text>
-            <Text style={styles.miniArtist} numberOfLines={1}>{track?.artist}</Text>
+          {box.w > 0 &&
+            (track?.artwork ? (
+              <Image source={{ uri: track.artwork }} style={{ width: coverSize, height: coverSize, borderRadius: 20 }} />
+            ) : (
+              <View style={[{ width: coverSize, height: coverSize, borderRadius: 20 }, styles.coverEmpty]}>
+                <Ionicons name="musical-notes" size={56} color={C.muted} />
+              </View>
+            ))}
+        </View>
+
+        <Animated.View style={[styles.titleRow, {
+          opacity: detailsOpacity,
+          transform: [{ translateY: detailsY }],
+        }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.trackTitle} numberOfLines={1}>{track?.title}</Text>
+            <Text style={styles.trackArtist} numberOfLines={1}>{track?.artist}</Text>
           </View>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => engine?.toggle()} style={[styles.miniPlay, { backgroundColor: A.solid }]}>
-          <Ionicons
-            name={engine?.isPlaying ? "pause" : "play"}
-            size={20}
-            color="#101010"
-            style={engine?.isPlaying ? undefined : { marginLeft: 2 }}
-          />
-        </TouchableOpacity>
+          <TouchableOpacity
+            onPress={downloadToLibrary}
+            disabled={libDownloading || libDownloaded}
+            style={styles.iconBtn}
+            accessibilityLabel="Download song"
+          >
+            {libDownloading ? (
+              <ActivityIndicator color={C.ink} size="small" />
+            ) : libDownloaded ? (
+              <Ionicons name="checkmark-circle" size={24} color={C.accent} />
+            ) : (
+              <Ionicons name="download-outline" size={24} color={C.ink} />
+            )}
+          </TouchableOpacity>
+        </Animated.View>
+
+        {!!currentLine && (
+          <Text style={styles.lyricPeek} numberOfLines={1}>{currentLine}</Text>
+        )}
+
+        <View
+          ref={trackRef}
+          onLayout={measureTrack}
+          style={styles.waveTrack}
+          hitSlop={{ top: 10, bottom: 10 }}
+          {...seekPan.panHandlers}
+        >
+          {bars.map((hgt, i) => {
+            const threshold = (i + 1) / BARS;
+            const barColor = waveProgress.interpolate({
+              inputRange: [Math.max(0, threshold - 0.018), threshold],
+              outputRange: [C.bar, C.accent],
+              extrapolate: "clamp",
+            });
+
+            return (
+              <Animated.View
+                key={i}
+                style={{
+                  width: 3,
+                  height: scrubbing ? hgt + 4 : hgt,
+                  borderRadius: 2,
+                  backgroundColor: barColor,
+                }}
+              />
+            );
+          })}
+        </View>
+        <View style={styles.timeRow}>
+          <Text style={styles.timeText}>{formatTime(shownPos)}</Text>
+          <Text style={styles.timeText}>{formatTime(duration)}</Text>
+        </View>
+
+        <View style={styles.controlsRow}>
+          <TouchableOpacity onPress={toggleShuffle} style={styles.iconBtn} accessibilityLabel="Shuffle">
+            <Ionicons name="shuffle" size={23} color={shuffleOn ? C.accentText : C.ink} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => onPrev && onPrev()} style={styles.iconBtn} accessibilityLabel="Previous">
+            <Ionicons name="play-skip-back" size={30} color={C.ink} />
+          </TouchableOpacity>
+          <Animated.View style={{ transform: [{ scale: playScale }] }}>
+            <TouchableOpacity
+              onPress={onPlayPausePress}
+              activeOpacity={0.85}
+              style={styles.playBtn}
+              accessibilityLabel={engine?.isPlaying ? "Pause" : "Play"}
+            >
+              <Ionicons
+                name={engine?.isPlaying ? "pause" : "play"}
+                size={32}
+                color={C.bg}
+                style={engine?.isPlaying ? undefined : { marginLeft: 3 }}
+              />
+            </TouchableOpacity>
+          </Animated.View>
+          <TouchableOpacity onPress={() => onNext && onNext()} style={styles.iconBtn} accessibilityLabel="Next">
+            <Ionicons name="play-skip-forward" size={30} color={C.ink} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => goToPanel(0)} style={styles.iconBtn} accessibilityLabel="Up next">
+            <Ionicons name="list" size={23} color={C.ink} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.actionRow}>
+          <TouchableOpacity onPress={() => goToPanel(1)} style={styles.actionBtn}>
+            <Ionicons name="text" size={18} color={C.ink} />
+            <Text style={styles.actionLabel}>Lyrics</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={cycleSleepTimer} style={styles.actionBtn}>
+            <Ionicons name={sleepMinutes ? "moon" : "moon-outline"} size={18} color={sleepMinutes ? C.accentText : C.ink} />
+            <Text style={[styles.actionLabel, sleepMinutes && { color: C.accentText }]}>
+              {sleepMinutes ? `${sleepMinutes}m` : "Sleep"}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={cycleSpeed} style={styles.actionBtn}>
+            <Ionicons name="speedometer-outline" size={18} color={playbackRate !== 1 ? C.accentText : C.ink} />
+            <Text style={[styles.actionLabel, playbackRate !== 1 && { color: C.accentText }]}>{playbackRate}x</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowConfig(true)} style={styles.actionBtn}>
+            <Ionicons name="options-outline" size={18} color={C.ink} />
+            <Text style={styles.actionLabel}>Audio</Text>
+          </TouchableOpacity>
+        </View>
       </Animated.View>
 
-      {/* Swipe-up card */}
-      <Animated.View style={[styles.card, { top: cardTop }]}>
+      {/* Up next / Lyrics / Related sheet */}
+      <Animated.View
+        style={[styles.card, { top: openTop, height: SHEET_H, transform: [{ translateY: cardY }] }]}
+      >
         <View {...cardPan.panHandlers}>
           <View style={styles.grab} />
           <View style={styles.cardTabs}>
             {CARD_TABS.map((tb, i) => (
               <TouchableOpacity key={tb} onPress={() => goToPanel(i)} style={styles.tabBtn}>
-                <Text style={[styles.tabText, panel === i && { color: "#fff" }]}>{tb}</Text>
-                <View style={[styles.tabLine, panel === i && { backgroundColor: A.solid }]} />
+                <Text style={[styles.tabText, panel === i && { color: C.ink }]}>{tb}</Text>
+                <View style={[styles.tabLine, panel === i && { backgroundColor: C.accent }]} />
               </TouchableOpacity>
             ))}
           </View>
@@ -740,7 +789,7 @@ export default function PlayerCard({
           onLayout={() => scrollRef.current?.scrollTo({ x: panel * W, animated: false })}
           onMomentumScrollEnd={(e) => setPanel(Math.round(e.nativeEvent.contentOffset.x / W))}
         >
-          {/* Up Next */}
+          {/* Up next */}
           <View style={[styles.cardPage, { width: W }]}>
             {!queue || queue.length === 0 ? (
               <Text style={styles.emptyText}>Nothing queued.</Text>
@@ -754,26 +803,21 @@ export default function PlayerCard({
                 {queue.map((q, i) => (
                   <TouchableOpacity
                     key={`${q.provider}-${q.id}-${i}`}
-                    style={styles.relatedRow}
-                    onPress={() =>
-                      onPlayQueueItem ? onPlayQueueItem(q, i) : onPlayTrack && onPlayTrack(q)
-                    }
+                    style={styles.row}
+                    onPress={() => (onPlayQueueItem ? onPlayQueueItem(q, i) : onPlayTrack && onPlayTrack(q))}
                   >
                     {q.artwork ? (
-                      <Image source={{ uri: q.artwork }} style={styles.queueArt} />
+                      <Image source={{ uri: q.artwork }} style={styles.thumb} />
                     ) : (
-                      <View style={[styles.queueArt, styles.coverEmpty]} />
+                      <View style={[styles.thumb, styles.coverEmpty]} />
                     )}
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text
-                        style={[styles.relatedTitle, i === queueIndex && { color: A.solid }]}
-                        numberOfLines={1}
-                      >
+                    <View style={{ flex: 1, marginLeft: 14 }}>
+                      <Text style={[styles.rowTitle, i === queueIndex && { color: C.accentText }]} numberOfLines={1}>
                         {q.title}
                       </Text>
-                      <Text style={styles.relatedArtist} numberOfLines={1}>{q.artist}</Text>
+                      <Text style={styles.rowArtist} numberOfLines={1}>{q.artist}</Text>
                     </View>
-                    {i === queueIndex && <Ionicons name="volume-high" size={18} color={A.solid} />}
+                    {i === queueIndex && <Ionicons name="volume-high" size={18} color={C.accentText} />}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -782,8 +826,67 @@ export default function PlayerCard({
 
           {/* Lyrics */}
           <View style={[styles.cardPage, { width: W }]}>
+            <View style={styles.lyricModeBar}>
+              <Text style={styles.lyricModeLabel}>LYRIC SYNC</Text>
+              <View style={styles.lyricModeSwitch}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Show lyrics line by line"
+                  accessibilityState={{ selected: lyricDisplayMode === "line" }}
+                  onPress={() => setLyricDisplayMode("line")}
+                  style={[
+                    styles.lyricModeButton,
+                    lyricDisplayMode === "line" && styles.lyricModeButtonActive,
+                  ]}
+                >
+                  <Text style={[
+                    styles.lyricModeText,
+                    lyricDisplayMode === "line" && styles.lyricModeTextActive,
+                  ]}>Line</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Show lyrics word by word"
+                  accessibilityState={{ selected: lyricDisplayMode === "word" }}
+                  onPress={() => setLyricDisplayMode("word")}
+                  style={[
+                    styles.lyricModeButton,
+                    lyricDisplayMode === "word" && styles.lyricModeButtonActive,
+                  ]}
+                >
+                  <Text style={[
+                    styles.lyricModeText,
+                    lyricDisplayMode === "word" && styles.lyricModeTextActive,
+                  ]}>Word</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={engine?.isPlaying ? "Pause playback while reading lyrics" : "Resume playback"}
+                onPress={onPlayPausePress}
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  backgroundColor: C.card || C.line,
+                  borderWidth: 1,
+                  borderColor: C.line,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginLeft: 8,
+                }}
+              >
+                <Ionicons
+                  name={engine?.isPlaying ? "pause" : "play"}
+                  size={20}
+                  color={C.ink}
+                />
+              </TouchableOpacity>
+            </View>
+
             {lyricsLoading ? (
-              <ActivityIndicator color="#fff" style={{ marginTop: 30 }} />
+              <ActivityIndicator color={C.ink} style={{ marginTop: 30 }} />
             ) : lyrics.length === 0 ? (
               <Text style={styles.emptyText}>No lyrics found for this track.</Text>
             ) : (
@@ -794,20 +897,48 @@ export default function PlayerCard({
                 contentContainerStyle={{ paddingBottom: 120 }}
                 showsVerticalScrollIndicator={false}
               >
-                {lyrics.map((line, i) => (
-                  <Text
-                    key={i}
-                    onLayout={(e) => {
-                      lineYs.current[i] = e.nativeEvent.layout.y;
-                    }}
-                    style={[
-                      styles.lyricLine,
-                      i === currentLineIndex && { color: "#fff", fontWeight: "800", fontSize: 22 },
-                    ]}
-                  >
-                    {line.text}
-                  </Text>
-                ))}
+                {lyrics.map((line, i) => {
+                  const isActiveLine = i === currentLineIndex;
+                  const parts = String(line.text || "").split(/(\s+)/);
+                  let wordIndex = 0;
+
+                  return (
+                    <Text
+                      key={i}
+                      onLayout={(e) => {
+                        lineYs.current[i] = e.nativeEvent.layout.y;
+                      }}
+                      style={[
+                        styles.lyricLine,
+                        isActiveLine && lyricDisplayMode === "line" && {
+                          color: C.ink,
+                          fontWeight: "800",
+                          fontSize: 24,
+                        },
+                      ]}
+                    >
+                      {lyricDisplayMode === "line"
+                        ? line.text
+                        : parts.map((part, j) => {
+                            if (!part) return null;
+                            if (/^\s+$/.test(part)) return part;
+
+                            const thisWordIndex = wordIndex++;
+                            const isActiveWord =
+                              isActiveLine && thisWordIndex === currentWordIndex;
+
+                            return (
+                              <Text
+                                key={j}
+                                style={isActiveWord ? styles.lyricWordActive : null}
+                              >
+                                {part}
+                              </Text>
+                            );
+                          })}
+                    </Text>
+                  );
+                })}
               </ScrollView>
             )}
           </View>
@@ -815,7 +946,7 @@ export default function PlayerCard({
           {/* Related */}
           <View style={[styles.cardPage, { width: W }]}>
             {relatedLoading ? (
-              <ActivityIndicator color="#fff" style={{ marginTop: 30 }} />
+              <ActivityIndicator color={C.ink} style={{ marginTop: 30 }} />
             ) : related.length === 0 ? (
               <Text style={styles.emptyText}>No related tracks found.</Text>
             ) : (
@@ -826,12 +957,12 @@ export default function PlayerCard({
                 showsVerticalScrollIndicator={false}
               >
                 {related.map((item, i) => (
-                  <TouchableOpacity key={i} style={styles.relatedRow} onPress={() => playRelated(item)}>
+                  <TouchableOpacity key={i} style={styles.row} onPress={() => playRelated(item)}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.relatedTitle} numberOfLines={1}>{item.title}</Text>
-                      <Text style={styles.relatedArtist} numberOfLines={1}>{item.artist}</Text>
+                      <Text style={styles.rowTitle} numberOfLines={1}>{item.title}</Text>
+                      <Text style={styles.rowArtist} numberOfLines={1}>{item.artist}</Text>
                     </View>
-                    <Ionicons name="play-circle-outline" size={24} color={A.solid} />
+                    <Ionicons name="play-circle-outline" size={26} color={C.ink} />
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -839,6 +970,11 @@ export default function PlayerCard({
           </View>
         </ScrollView>
       </Animated.View>
+
+      {/* Audio settings */}
+      <Modal visible={showConfig} animationType="slide" onRequestClose={() => setShowConfig(false)}>
+        <ConfigureAudioScreen trackId={trackKey(track)} trackTitle={track?.title} onBack={() => setShowConfig(false)} />
+      </Modal>
 
       {/* Share sheet */}
       <Modal
@@ -853,11 +989,11 @@ export default function PlayerCard({
           onPress={() => setShareSheetVisible(false)}
         >
           <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Share with a friend</Text>
+            <Text style={styles.sheetTitle}>Send to a friend</Text>
             {shareLoading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={C.ink} />
             ) : shareFriends.length === 0 ? (
-              <Text style={{ color: "#8A8A8E" }}>You don't have friends yet.</Text>
+              <Text style={{ color: C.muted }}>You don't have friends yet.</Text>
             ) : (
               <FlatList
                 data={shareFriends}
@@ -868,8 +1004,8 @@ export default function PlayerCard({
                     disabled={sharingToId === item.id}
                     onPress={() => shareToFriend(item)}
                   >
-                    <Text style={{ color: "#fff", fontSize: 15, flex: 1 }}>{item.username}</Text>
-                    {sharingToId === item.id && <ActivityIndicator color="#fff" size="small" />}
+                    <Text style={{ color: C.ink, fontSize: 16, flex: 1 }}>{item.username}</Text>
+                    {sharingToId === item.id && <ActivityIndicator color={C.ink} size="small" />}
                   </TouchableOpacity>
                 )}
               />
@@ -882,160 +1018,149 @@ export default function PlayerCard({
 }
 
 const styles = StyleSheet.create({
-  topTitle: { color: "rgba(255,255,255,0.85)", fontSize: 14, fontWeight: "700" },
-  miniRow: { position: "absolute", left: 20, right: 20, height: 60, flexDirection: "row", alignItems: "center" },
-  miniArt: { width: 52, height: 52, borderRadius: 12 },
-  miniTitle: { color: "#fff", fontSize: 16, fontWeight: "800" },
-  miniArtist: { color: "rgba(255,255,255,0.65)", fontSize: 12, marginTop: 2 },
-  miniPlay: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginLeft: 10 },
-  card: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(14,16,24,0.97)",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderTopWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    overflow: "hidden",
-  },
-  grab: { alignSelf: "center", width: 40, height: 4, borderRadius: 2, marginTop: 8, backgroundColor: "rgba(255,255,255,0.3)" },
-  cardTabs: { flexDirection: "row", justifyContent: "center", gap: 14, paddingTop: 6, paddingBottom: 4 },
-  cardPage: { paddingHorizontal: 22, paddingTop: 8, flex: 1 },
-  queueArt: { width: 44, height: 44, borderRadius: 8 },
-  root: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#080A10",
-  },
+  root: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.bg },
 
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingBottom: 6,
   },
-  roundBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-  },
-  tabsRow: { flexDirection: "row", gap: 6 },
-  tabBtn: { paddingHorizontal: 10, paddingVertical: 6, alignItems: "center" },
-  tabText: { color: "rgba(255,255,255,0.5)", fontSize: 14, fontWeight: "700" },
-  tabLine: { marginTop: 5, height: 3, width: 22, borderRadius: 2, backgroundColor: "transparent" },
+  iconBtn: { width: 46, height: 46, borderRadius: 23, justifyContent: "center", alignItems: "center" },
+  eyebrow: { color: C.muted, fontSize: 11, fontWeight: "700", letterSpacing: 1.2, textTransform: "uppercase" },
+  topSub: { color: C.ink, fontSize: 14, fontWeight: "700", marginTop: 2 },
 
-  panel: { paddingHorizontal: 26, paddingTop: 14, alignItems: "center" },
+  coverBox: { flex: 1, minHeight: 120, alignItems: "center", justifyContent: "center", marginVertical: 12 },
+  coverEmpty: { justifyContent: "center", alignItems: "center", backgroundColor: C.chip },
 
-  coverWrap: {
-    borderRadius: 26,
-    backgroundColor: "#000",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.85,
-    shadowRadius: 26,
-    elevation: 18,
-    marginBottom: 22,
-  },
-  cover: { width: "100%", height: "100%", borderRadius: 26 },
-  coverEmpty: { justifyContent: "center", alignItems: "center", backgroundColor: "rgba(255,255,255,0.07)" },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  trackTitle: { color: C.ink, fontSize: 26, fontWeight: "800", letterSpacing: -0.4 },
+  trackArtist: { color: C.muted, fontSize: 15, marginTop: 3 },
+  lyricPeek: { color: C.accentText, fontSize: 13, fontWeight: "700", marginTop: 6 },
 
-  titleRow: { flexDirection: "row", alignItems: "center", width: "100%", gap: 12 },
-  trackTitle: { color: "#fff", fontSize: 24, fontWeight: "800" },
-  trackArtist: { color: "rgba(255,255,255,0.65)", fontSize: 14, marginTop: 3 },
-  lyricPeek: { alignSelf: "flex-start", fontSize: 13, fontWeight: "600", marginTop: 10 },
-
-  progressRow: { width: "100%", marginTop: 20, marginBottom: 14 },
-  progressTrack: {
-    height: 4,
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.22)",
-    justifyContent: "center",
-  },
-  progressFill: { height: "100%", borderRadius: 3 },
-  progressDot: {
-    position: "absolute",
-    top: -4.5,
-    width: 13,
-    height: 13,
-    borderRadius: 7,
-    marginLeft: -6,
-  },
-  timeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
-  timeText: { color: "rgba(255,255,255,0.55)", fontSize: 11, fontWeight: "500" },
-
-  controlsRow: {
-    width: "100%",
+  waveTrack: {
+    height: 48,
+    marginTop: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  sideBtn: { width: 40, height: 44, justifyContent: "center", alignItems: "center" },
-  skipBtn: { width: 46, height: 46, justifyContent: "center", alignItems: "center" },
+  timeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 2 },
+  timeText: { color: C.muted, fontSize: 12, fontWeight: "600" },
+
+  controlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 14,
+  },
   playBtn: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: C.ink,
     justifyContent: "center",
     alignItems: "center",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.7,
-    shadowRadius: 16,
-    elevation: 12,
   },
 
   actionRow: {
-    width: "100%",
     flexDirection: "row",
-    justifyContent: "space-around",
-    marginTop: 22,
-    paddingVertical: 12,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
+    justifyContent: "space-between",
+    marginTop: 14,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: C.line,
   },
-  actionBtn: { alignItems: "center", gap: 4, minWidth: 56 },
-  actionLabel: { color: "rgba(255,255,255,0.75)", fontSize: 11, fontWeight: "600" },
+  actionBtn: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 44, paddingHorizontal: 6 },
+  actionLabel: { color: C.ink, fontSize: 13, fontWeight: "700" },
 
-  panelHeading: { color: "#fff", fontSize: 20, fontWeight: "800", marginBottom: 16 },
-  emptyText: { color: "rgba(255,255,255,0.5)", marginTop: 30, textAlign: "center" },
-  lyricLine: {
-    color: "rgba(255,255,255,0.4)",
-    fontSize: 19,
-    lineHeight: 30,
-    fontWeight: "700",
-    marginBottom: 10,
+  card: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    backgroundColor: C.bg,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderColor: C.line,
+    overflow: "hidden",
   },
+  grab: { alignSelf: "center", width: 40, height: 4, borderRadius: 2, marginTop: 8, backgroundColor: C.line },
+  cardTabs: { flexDirection: "row", justifyContent: "center", gap: 18, paddingTop: 4 },
+  tabBtn: { paddingHorizontal: 6, minHeight: 44, justifyContent: "center", alignItems: "center" },
+  tabText: { color: C.muted, fontSize: 14, fontWeight: "700" },
+  tabLine: { marginTop: 5, height: 3, width: 24, borderRadius: 2, backgroundColor: "transparent" },
+  cardPage: { paddingHorizontal: 24, paddingTop: 8, flex: 1 },
+  emptyText: { color: C.muted, marginTop: 30, textAlign: "center" },
 
-  relatedRow: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 13,
+    minHeight: 64,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.08)",
+    borderBottomColor: C.line,
   },
-  relatedTitle: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  relatedArtist: { color: "rgba(255,255,255,0.6)", fontSize: 12, marginTop: 2 },
+  thumb: { width: 44, height: 44, borderRadius: 10 },
+  rowTitle: { color: C.ink, fontSize: 15, fontWeight: "700" },
+  rowArtist: { color: C.muted, fontSize: 13, marginTop: 2 },
+  lyricModeBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  lyricModeLabel: {
+    color: C.muted,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+  },
+  lyricModeSwitch: {
+    flexDirection: "row",
+    backgroundColor: C.chip,
+    borderRadius: 20,
+    padding: 3,
+  },
+  lyricModeButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  lyricModeButtonActive: {
+    backgroundColor: C.ink,
+  },
+  lyricModeText: {
+    color: C.muted,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  lyricModeTextActive: {
+    color: C.bg,
+  },
+  lyricLine: { color: C.muted, fontSize: 20, lineHeight: 30, fontWeight: "700", marginBottom: 10 },
+  lyricWordActive: {
+    color: C.accentText,
+    fontWeight: "900",
+  },
 
-  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  sheetBackdrop: { flex: 1, backgroundColor: "rgba(22,20,15,0.35)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: "#1E1E22",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
+    backgroundColor: C.bg,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
     maxHeight: "60%",
   },
-  sheetTitle: { color: "#fff", fontSize: 17, fontWeight: "700", marginBottom: 14 },
-  friendRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12 },
+  sheetTitle: { color: C.ink, fontSize: 18, fontWeight: "800", marginBottom: 12 },
+  friendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 52,
+    borderBottomWidth: 1,
+    borderBottomColor: C.line,
+  },
 });
-

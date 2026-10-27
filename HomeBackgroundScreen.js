@@ -8,6 +8,7 @@ import {
   DEFAULT_BG, loadHomeBackground, saveHomeBackground, importIntoApp, discardImported,
 } from "./homeBackground";
 import { getDownloads } from "./libraryStorage";
+import WallpaperButton from "./WallpaperButton";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 const isVideo = (d) =>
@@ -85,6 +86,7 @@ export default function HomeBackgroundScreen({ onBack }) {
         )}
       </View>
 
+      {bg && bg.type === "video" && <WallpaperButton style={{ marginBottom: 12 }} />}
       <Pressable style={st.btn} onPress={pickFromGallery} disabled={busy}>
         {busy ? <ActivityIndicator color="#0B0A0F" /> : <Text style={st.btnTxt}>Choose from gallery</Text>}
       </Pressable>

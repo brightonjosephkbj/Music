@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from "expo-audio";
 import { useVideoPlayer } from "expo-video";
+import { loadAudioSettings, subscribe as subscribeAudioSettings, applyToPlayers, trackKey } from "./audioSettings";
 import { useEvent } from "expo";
+import { AppState } from "react-native";
 import { logPlay } from "./listeningHistory";
 
 // ---------------------------------------------------------------------------
@@ -57,7 +59,7 @@ export default function usePlaybackEngine(track) {
   const uri = resolveUri(track);
 
   // ---- Audio branch (expo-audio) - created once, idle, no initial source ----
-  const audioPlayer = useAudioPlayer(null);
+  const audioPlayer = useAudioPlayer(null, { updateInterval: 100 });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
 
   // ---- Video branch (expo-video) - same idea, created once ----
@@ -67,6 +69,17 @@ export default function usePlaybackEngine(track) {
   const playingEvent = useEvent(videoPlayer, "playingChange", {
     isPlaying: videoPlayer?.playing ?? false,
   });
+
+  // ---- Obsidian audio settings (speed / volume / keep-pitch), mp3 + mp4 ----
+  const settingsKey = trackKey(track);
+  useEffect(() => { loadAudioSettings(); }, []);
+  useEffect(() => {
+    const apply = () => applyToPlayers({ audioPlayer, videoPlayer }, settingsKey);
+    apply();
+    const t = setTimeout(apply, 400);
+    const unsub = subscribeAudioSettings(apply);
+    return () => { clearTimeout(t); unsub(); };
+  }, [settingsKey, uri, isVideo, audioStatus?.isLoaded, audioPlayer, videoPlayer]);
 
   // Swap the active player's source whenever the resolved uri actually
   // changes - this is the real fix, replacing the old (broken) assumption
@@ -112,10 +125,26 @@ export default function usePlaybackEngine(track) {
   const [videoPosition, setVideoPosition] = useState(0);
   useEffect(() => {
     if (!isVideo || !videoPlayer) return;
-    const interval = setInterval(() => {
-      setVideoPosition(videoPlayer.currentTime || 0);
-    }, 250);
-    return () => clearInterval(interval);
+    let interval = null;
+    const stop = () => {
+      if (interval) { clearInterval(interval); interval = null; }
+    };
+    const start = () => {
+      if (interval) return;
+      interval = setInterval(() => {
+        try {
+          setVideoPosition(videoPlayer.currentTime || 0);
+        } catch (e) {
+          // the OS released the player while we were away: stop polling it
+          stop();
+        }
+      }, 250);
+    };
+    if (AppState.currentState === "active") start();
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") start(); else stop();
+    });
+    return () => { stop(); sub.remove(); };
   }, [isVideo, videoPlayer]);
 
   // Lock screen / Now Playing is owned entirely by expo-media-control

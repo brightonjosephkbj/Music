@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   View,
@@ -61,7 +62,7 @@ export default function AIChatScreen({ onClose }) {
       );
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== statusId));
-      setError(err.message || "Couldn't create that playlist");
+      setError(friendlyError(err, "Couldn't create that playlist"));
     } finally {
       setSending(false);
       requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
@@ -149,7 +150,7 @@ export default function AIChatScreen({ onClose }) {
       );
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== thinkingId));
-      setError(err.message || "Something went wrong");
+      setError(friendlyError(err, "Something went wrong"));
       setSending(false);
     }
   }, [input, sending, mode, sendPlaylistRequest]);

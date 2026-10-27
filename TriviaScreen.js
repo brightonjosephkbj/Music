@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -107,7 +108,7 @@ export default function TriviaScreen({ onBack }) {
       setSelectedAnswer(null);
       setPhase("quiz");
     } catch (err) {
-      setQuizError(err.message || "Couldn't load questions");
+      setQuizError(friendlyError(err, "Couldn't load questions"));
     } finally {
       setLoadingQuestions(false);
     }

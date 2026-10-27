@@ -1,44 +1,124 @@
-import React, { useRef, useEffect } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Image } from "react-native";
+import React, { useRef, useEffect, useState } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Image, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { VideoView } from "expo-video";
 import { useDownloads } from "./DownloadsContext";
+import { resumeAIPlaylists } from "./aiPlaylist";
+import useAppResume from "./useAppResume";
+import { subscribeScrollY } from "./shellScroll";
 
-// Shared shell: renders whichever screen is active as children, then
-// overlays the persistent bottom nav + mini player trigger on top of it.
-//
-// Two states:
-//   State A (default) - full nav pill (Home/Library/Search/Settings) with a
-//     spinning CD disc (audio) or small video box (video) floating to its
-//     right, only when something's playing.
-//   State B (player expanded) - nav pill shrinks to a small 20px-radius pill
-//     on the left; the caller (App.js) is responsible for rendering the
-//     actual expanded Player/full-screen video on top of this shell.
+// Docked bottom nav (5 tabs) + mini player that collapses to a shining disc
+// while the user scrolls down and returns when they scroll up.
+//   State A: docked nav, mini bar / disc above it.
+//   State B (playerExpanded): only a small collapse pill; App.js renders the player.
+
 const NAV_ITEMS = [
-  { key: "home", label: "Home" },
-  { key: "library", label: "Library" },
-  { key: "search", label: "Search" },
+  { key: "home", label: "Home", icon: "home-outline", iconActive: "home" },
+  { key: "library", label: "Library", icon: "albums-outline", iconActive: "albums" },
+  { key: "search", label: "Search", icon: "search-outline", iconActive: "search" },
+  { key: "videos", label: "Videos", icon: "videocam-outline", iconActive: "videocam" },
+  { key: "downloads", label: "Downloads", icon: "download-outline", iconActive: "download" },
 ];
 
-const ACCENT = "#FF6B6B";
-const GLASS_BORDER = "rgba(255,255,255,0.25)";
+const ACCENT = "#FF7A3D";
+const SURFACE = "#171412";
+const SURFACE_2 = "#24211E";
+const MUTED = "#A8A196";
+const TEXT = "#F2EDE4";
+const NAV_ROW_H = 56;
+const NAV_BOTTOM_PAD = Platform.OS === "android" ? 48 : 22; // clears the system buttons
+export const NAV_HEIGHT = NAV_ROW_H + NAV_BOTTOM_PAD;
+const MINI_H = 60;
+const DISC = 56;
+
+const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
+
+function SpringTouchable({ children, style, ...props }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const pressIn = () => {
+    Animated.spring(scale, { toValue: 0.93, speed: 30, bounciness: 4, useNativeDriver: true }).start();
+  };
+  const pressOut = () => {
+    Animated.spring(scale, { toValue: 1, speed: 24, bounciness: 7, useNativeDriver: true }).start();
+  };
+  return (
+    <AnimatedTouchableOpacity
+      {...props}
+      style={[style, { transform: [{ scale }] }]}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+    >
+      {children}
+    </AnimatedTouchableOpacity>
+  );
+}
 
 export default function AppShell({
   children,
   activeNav,
+  screenKey,
   onNavPress,
-  nowPlaying,      // track object, or null
-  engine,          // result of usePlaybackEngine(nowPlaying), or null
-  playerExpanded,  // true once the user has tapped into State B
-  onExpandPress,   // tap the disc/video box -> expand
-  onCollapsePress, // tap the shrunken nav pill -> collapse back to State A
-  onSkipNext,      // skip to the next track in the queue
-  onSkipPrev,      // skip to the previous track in the queue
+  nowPlaying,
+  engine,
+  playerExpanded,
+  onExpandPress,
+  onCollapsePress,
+  onSkipNext,
+  onSkipPrev,
 }) {
   const { hasActiveDownloads } = useDownloads();
+  const insets = useSafeAreaInsets();
+  const navBottomPad = Math.max(insets.bottom, 16) + 4;
+  const navHeight = NAV_ROW_H + navBottomPad;
 
-  // Flickering blue dot while any download is active.
+  // Selected-tab entrance animation
+  const tabIconScale = useRef(new Animated.Value(1)).current;
+  const tabLabelOpacity = useRef(new Animated.Value(1)).current;
+  const tabLabelRise = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    tabIconScale.setValue(0.82);
+    tabLabelOpacity.setValue(0);
+    tabLabelRise.setValue(4);
+    const entrance = Animated.parallel([
+      Animated.spring(tabIconScale, { toValue: 1, stiffness: 300, damping: 19, mass: 0.7, useNativeDriver: true }),
+      Animated.timing(tabLabelOpacity, { toValue: 1, duration: 170, useNativeDriver: true }),
+      Animated.timing(tabLabelRise, { toValue: 0, duration: 190, useNativeDriver: true }),
+    ]);
+    entrance.start();
+    return () => entrance.stop();
+  }, [activeNav, tabIconScale, tabLabelOpacity, tabLabelRise]);
+
+  // Screen transition
+  const screenOpacity = useRef(new Animated.Value(1)).current;
+  const screenTranslateX = useRef(new Animated.Value(0)).current;
+  const previousScreenKey = useRef(screenKey);
+
+  useEffect(() => {
+    if (previousScreenKey.current === screenKey) return;
+    previousScreenKey.current = screenKey;
+    screenOpacity.setValue(0);
+    screenTranslateX.setValue(14);
+    const transition = Animated.parallel([
+      Animated.timing(screenOpacity, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(screenTranslateX, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]);
+    transition.start();
+    return () => transition.stop();
+  }, [screenKey, screenOpacity, screenTranslateX]);
+
+  // Flickering dot while any download is active
   const dotOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    resumeAIPlaylists().catch(() => {});
+  }, []);
+  useAppResume(() => {
+    resumeAIPlaylists().catch(() => {});
+  }, 15000);
+
   useEffect(() => {
     let loop;
     if (hasActiveDownloads) {
@@ -54,94 +134,180 @@ export default function AppShell({
     }
     return () => loop && loop.stop();
   }, [hasActiveDownloads]);
+
+  // Disc spin (keeps its angle when paused)
   const discRotation = useRef(new Animated.Value(0)).current;
   const spinLoop = useRef(null);
-
   const isVideo = nowPlaying?.type === "video";
   const isPlaying = !!engine?.isPlaying;
 
   useEffect(() => {
     if (nowPlaying && !isVideo && isPlaying) {
       spinLoop.current = Animated.loop(
-        Animated.timing(discRotation, {
-          toValue: 1,
-          duration: 6000,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        })
+        Animated.timing(discRotation, { toValue: 1, duration: 6000, easing: Easing.linear, useNativeDriver: true })
       );
       spinLoop.current.start();
     } else {
       spinLoop.current && spinLoop.current.stop();
     }
     return () => spinLoop.current && spinLoop.current.stop();
-    // Rotation deliberately keeps its current value (not reset) when paused,
-    // so resuming playback continues the spin from wherever it left off
-    // rather than snapping back to 0deg.
   }, [nowPlaying, isVideo, isPlaying]);
 
   const spinDeg = discRotation.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
 
+  // Mini player: bar <-> disc, driven by scroll direction
+  const [collapsed, setCollapsed] = useState(false);
+  const collapse = useRef(new Animated.Value(0)).current;
+  const lastY = useRef(0);
+
+  useEffect(() => {
+    return subscribeScrollY((y) => {
+      if (y <= 0) {
+        lastY.current = 0;
+        setCollapsed(false);
+        return;
+      }
+      const dy = y - lastY.current;
+      if (dy > 10) {
+        lastY.current = y;
+        setCollapsed(true);
+      } else if (dy < -10) {
+        lastY.current = y;
+        setCollapsed(false);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    lastY.current = 0;
+    setCollapsed(false);
+  }, [screenKey]);
+
+  useEffect(() => {
+    const a = Animated.spring(collapse, {
+      toValue: collapsed ? 1 : 0,
+      stiffness: 260,
+      damping: 22,
+      mass: 0.8,
+      useNativeDriver: true,
+    });
+    a.start();
+    return () => a.stop();
+  }, [collapsed, collapse]);
+
+  const barOpacity = collapse.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+  const barTranslate = collapse.interpolate({ inputRange: [0, 1], outputRange: [0, 18] });
+  const barScale = collapse.interpolate({ inputRange: [0, 1], outputRange: [1, 0.92] });
+  const discScale = collapse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] });
+
+  const title = nowPlaying?.title || nowPlaying?.name || "Now playing";
+  const artist = nowPlaying?.artist || nowPlaying?.channel || "";
+
+  const renderBarArt = () => {
+    if (isVideo) {
+      return engine?.videoPlayer && !collapsed ? (
+        <VideoView player={engine.videoPlayer} style={styles.miniVideo} contentFit="cover" nativeControls={false} />
+      ) : (
+        <View style={[styles.miniVideo, styles.miniArtEmpty]} />
+      );
+    }
+    return nowPlaying?.artwork ? (
+      <Image source={{ uri: nowPlaying.artwork }} style={styles.miniArt} resizeMode="cover" />
+    ) : (
+      <View style={[styles.miniArt, styles.miniArtEmpty]}>
+        <Ionicons name="musical-notes" size={20} color={MUTED} />
+      </View>
+    );
+  };
+
   return (
     <View style={styles.root}>
-      {/* Active screen renders here, full bleed underneath the nav */}
-      <View style={styles.screenArea}>{children}</View>
+      <Animated.View
+        style={[
+          styles.screenArea,
+          { paddingBottom: navHeight - 20 },
+          { opacity: screenOpacity, transform: [{ translateX: screenTranslateX }] },
+        ]}
+      >
+        {children}
+      </Animated.View>
 
-      {/* Persistent nav shell - collapses to a small pill in State B */}
-      <View style={styles.navShellRow} pointerEvents="box-none">
-        {playerExpanded ? (
-          <TouchableOpacity style={styles.navMiniPill} onPress={onCollapsePress}>
-            <Text style={styles.navMiniGlyph}>⌄</Text>
-          </TouchableOpacity>
-        ) : (
-          <>
-            <View style={[styles.navPill, nowPlaying && styles.navPillCompact]}>
-              {NAV_ITEMS.map((item) => {
-                const active = item.key === activeNav;
-                const showDot = item.key === "library" && hasActiveDownloads;
-                return (
-                  <TouchableOpacity
-                    key={item.key}
-                    style={[
-                      styles.navItem,
-                      nowPlaying && styles.navItemCompact,
-                      active && styles.navItemActive,
-                    ]}
-                    onPress={() => onNavPress && onNavPress(item.key)}
-                  >
-                    <View style={styles.navItemLabelRow}>
-                      <Text
-                        style={[
-                          styles.navItemText,
-                          nowPlaying && styles.navItemTextCompact,
-                          active && styles.navItemTextActive,
-                        ]}
-                      >
-                        {item.label}
-                      </Text>
-                      {showDot && <Animated.View style={[styles.downloadDot, { opacity: dotOpacity }]} />}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(0,0,0,0.65)", "rgba(0,0,0,0)"]}
+        style={{ position: "absolute", top: 0, left: 0, right: 0, height: insets.top + 14 }}
+      />
 
-            {/* Compact transport cluster: prev, disc/video (tap to expand), play/pause, next.
-                Only rendered once something's loaded - matches the old disc-only behavior
-                for "nothing playing", just with real controls now that a queue exists. */}
-            {nowPlaying && (
-              <View style={styles.playerCluster}>
-                <TouchableOpacity
+      {playerExpanded ? (
+        <View style={[styles.collapseRow, { bottom: Math.max(insets.bottom, 16) + 16 }]} pointerEvents="box-none">
+          <SpringTouchable
+            style={styles.navMiniPill}
+            onPress={onCollapsePress}
+            accessibilityLabel="Collapse player"
+          >
+            <Ionicons name="chevron-down" size={22} color={TEXT} />
+          </SpringTouchable>
+        </View>
+      ) : (
+        <>
+          {nowPlaying && (
+            <View style={[styles.miniLayer, { bottom: navHeight + 8 }]} pointerEvents="box-none">
+              {/* Full mini bar */}
+              <Animated.View
+                pointerEvents={collapsed ? "none" : "auto"}
+                style={[
+                  styles.miniBar,
+                  { opacity: barOpacity, transform: [{ translateY: barTranslate }, { scale: barScale }] },
+                ]}
+              >
+                <SpringTouchable style={styles.miniMain} onPress={onExpandPress} accessibilityLabel="Open player">
+                  {renderBarArt()}
+                  <View style={styles.miniText}>
+                    <Text numberOfLines={1} style={styles.miniTitle}>{title}</Text>
+                    {!!artist && <Text numberOfLines={1} style={styles.miniSub}>{artist}</Text>}
+                  </View>
+                </SpringTouchable>
+                <SpringTouchable
+                  style={styles.miniBtn}
                   onPress={() => onSkipPrev && onSkipPrev()}
-                  style={styles.transportMini}
-                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                  accessibilityLabel="Previous"
                 >
-                  <Text style={styles.transportMiniGlyph}>{"‹‹"}</Text>
-                </TouchableOpacity>
+                  <Ionicons name="play-skip-back" size={20} color={TEXT} />
+                </SpringTouchable>
+                <SpringTouchable
+                  style={[styles.miniBtn, styles.miniPlay]}
+                  onPress={() => engine?.toggle && engine.toggle()}
+                  accessibilityLabel={isPlaying ? "Pause" : "Play"}
+                >
+                  <Ionicons name={isPlaying ? "pause" : "play"} size={20} color="#121110" />
+                </SpringTouchable>
+                <SpringTouchable
+                  style={styles.miniBtn}
+                  onPress={() => onSkipNext && onSkipNext()}
+                  accessibilityLabel="Next"
+                >
+                  <Ionicons name="play-skip-forward" size={20} color={TEXT} />
+                </SpringTouchable>
+              </Animated.View>
 
-                {!isVideo ? (
-                  <TouchableOpacity onPress={onExpandPress} style={styles.discWrap}>
-                    <Animated.View style={[styles.disc, { transform: [{ rotate: spinDeg }] }]}>
+              {/* Shining disc */}
+              <Animated.View
+                pointerEvents={collapsed ? "auto" : "none"}
+                style={[styles.discDock, { opacity: collapse, transform: [{ scale: discScale }] }]}
+              >
+                {isVideo ? (
+                  <SpringTouchable onPress={onExpandPress} accessibilityLabel="Open player">
+                    {engine?.videoPlayer && collapsed ? (
+                      <VideoView player={engine.videoPlayer} style={styles.videoBox} contentFit="cover" nativeControls={false} />
+                    ) : (
+                      <View style={[styles.videoBox, styles.miniArtEmpty]} />
+                    )}
+                  </SpringTouchable>
+                ) : (
+                  <SpringTouchable onPress={onExpandPress} style={styles.discWrap} accessibilityLabel="Open player">
+                    <Animated.View
+                      style={[styles.disc, isPlaying && styles.discPlaying, { transform: [{ rotate: spinDeg }] }]}
+                    >
                       {!!nowPlaying.artwork && (
                         <Image
                           source={{ uri: nowPlaying.artwork }}
@@ -152,100 +318,127 @@ export default function AppShell({
                       )}
                       <View style={styles.discHole} />
                     </Animated.View>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity onPress={onExpandPress} style={styles.videoBoxWrap}>
-                    {engine?.videoPlayer ? (
-                      <VideoView
-                        player={engine.videoPlayer}
-                        style={styles.videoBox}
-                        contentFit="cover"
-                        nativeControls={false}
-                      />
-                    ) : (
-                      <View style={[styles.videoBox, styles.videoBoxFallback]} />
-                    )}
-                  </TouchableOpacity>
+                    <LinearGradient
+                      pointerEvents="none"
+                      colors={["rgba(255,255,255,0.40)", "rgba(255,255,255,0)"]}
+                      start={{ x: 0.1, y: 0 }}
+                      end={{ x: 0.75, y: 0.75 }}
+                      style={styles.discGloss}
+                    />
+                  </SpringTouchable>
                 )}
+              </Animated.View>
+            </View>
+          )}
 
-                <TouchableOpacity
-                  onPress={() => engine?.toggle && engine.toggle()}
-                  style={styles.transportMini}
-                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          {/* Docked nav */}
+          <View style={[styles.navDock, { height: navHeight, paddingBottom: navBottomPad }]}>
+            {NAV_ITEMS.map((item) => {
+              const active = item.key === activeNav;
+              const showDot = item.key === "downloads" && hasActiveDownloads;
+              return (
+                <SpringTouchable
+                  key={item.key}
+                  style={styles.navItem}
+                  onPress={() => onNavPress && onNavPress(item.key)}
+                  accessibilityLabel={item.label}
                 >
-                  <Ionicons name={isPlaying ? "pause" : "play"} size={13} color="#fff" />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => onSkipNext && onSkipNext()}
-                  style={styles.transportMini}
-                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-                >
-                  <Text style={styles.transportMiniGlyph}>{"››"}</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </>
-        )}
-      </View>
+                  <View style={[styles.navItemInner, active && styles.navItemInnerActive]}>
+                    <View>
+                      <Animated.View style={{ transform: [{ scale: active ? tabIconScale : 1 }] }}>
+                        <Ionicons
+                          name={active ? item.iconActive : item.icon}
+                          size={22}
+                          color={active ? ACCENT : MUTED}
+                        />
+                      </Animated.View>
+                      {showDot && (
+                        <Animated.View
+                          style={[styles.downloadDot, { opacity: dotOpacity, position: "absolute", top: -2, right: -4 }]}
+                        />
+                      )}
+                    </View>
+                    {active && (
+                      <Animated.Text
+                        numberOfLines={1}
+                        style={[
+                          styles.navItemText,
+                          { opacity: tabLabelOpacity, transform: [{ translateY: tabLabelRise }] },
+                        ]}
+                      >
+                        {item.label}
+                      </Animated.Text>
+                    )}
+                  </View>
+                </SpringTouchable>
+              );
+            })}
+          </View>
+        </>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
-  screenArea: { flex: 1 },
-  navShellRow: {
-    position: "absolute", left: 20, right: 20, bottom: 24, flexDirection: "row", alignItems: "center",
-  },
-  navPill: {
-    flex: 1, flexDirection: "row", backgroundColor: "rgba(20,20,25,0.55)", borderRadius: 30,
-    borderWidth: 1, borderColor: GLASS_BORDER, paddingVertical: 8, paddingHorizontal: 6, justifyContent: "space-around",
-  },
-  // Nav pill shares the row with the transport cluster once something's
-  // playing, so it needs to give up some breathing room.
-  navPillCompact: { paddingHorizontal: 3 },
-  navItem: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
-  navItemCompact: { paddingHorizontal: 7 },
-  navItemActive: { backgroundColor: ACCENT },
-  navItemText: { color: "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: "600" },
-  navItemLabelRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  downloadDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#4EA1FF" },
-  navItemTextCompact: { fontSize: 11 },
-  navItemTextActive: { color: "#fff" },
+  // Ends 20px inside the nav so the nav's rounded top corners reveal content, not black.
+  screenArea: { flex: 1, paddingBottom: NAV_HEIGHT - 20 },
 
-  // Compact prev/disc-or-video/play-pause/next cluster, shown to the right
-  // of the nav pill whenever a track is loaded.
-  playerCluster: {
-    flexDirection: "row", alignItems: "center", marginLeft: 8,
-    backgroundColor: "rgba(20,20,25,0.55)", borderRadius: 26,
-    borderWidth: 1, borderColor: GLASS_BORDER, paddingHorizontal: 4, paddingVertical: 4,
+  navDock: {
+    position: "absolute", left: 0, right: 0, bottom: 0, height: NAV_HEIGHT,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-around",
+    backgroundColor: SURFACE, borderTopLeftRadius: 22, borderTopRightRadius: 22,
+    borderTopWidth: 1, borderColor: SURFACE_2,
+    paddingTop: 6, paddingBottom: NAV_BOTTOM_PAD, paddingHorizontal: 6,
+    elevation: 12,
   },
-  transportMini: { width: 26, height: 44, justifyContent: "center", alignItems: "center" },
-  transportMiniGlyph: { color: "#fff", fontSize: 13, fontWeight: "700" },
-
-  // State B: shrunken nav pill, tucked to the left, tap to collapse the player.
-  navMiniPill: {
-    width: 44, height: 44, borderRadius: 20, backgroundColor: "rgba(20,20,25,0.7)",
-    borderWidth: 1, borderColor: GLASS_BORDER, justifyContent: "center", alignItems: "center",
+  navItem: { flex: 1, alignItems: "center", justifyContent: "center" },
+  navItemInner: {
+    minWidth: 64, height: 48, paddingHorizontal: 12, borderRadius: 24, overflow: "hidden",
+    alignItems: "center", justifyContent: "center",
   },
-  navMiniGlyph: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  navItemInnerActive: { backgroundColor: "rgba(255,122,61,0.22)" },
+  navItemText: { color: ACCENT, fontSize: 11, fontWeight: "600", marginTop: 2 },
+  downloadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: ACCENT },
 
-  discWrap: {},
+  miniLayer: {
+    position: "absolute", left: 0, right: 0, bottom: NAV_HEIGHT + 8, height: MINI_H,
+  },
+  miniBar: {
+    position: "absolute", left: 12, right: 12, bottom: 0, height: MINI_H,
+    flexDirection: "row", alignItems: "center", paddingHorizontal: 8,
+    backgroundColor: SURFACE_2, borderRadius: 14, overflow: "hidden", elevation: 6,
+  },
+  miniMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center" },
+  miniArt: { width: 44, height: 44, borderRadius: 8, backgroundColor: "#111" },
+  miniVideo: { width: 60, height: 40, borderRadius: 8, backgroundColor: "#111", overflow: "hidden" },
+  miniArtEmpty: { alignItems: "center", justifyContent: "center", backgroundColor: SURFACE },
+  miniText: { flex: 1, minWidth: 0, marginLeft: 10 },
+  miniTitle: { color: TEXT, fontSize: 14, fontWeight: "600" },
+  miniSub: { color: MUTED, fontSize: 12, marginTop: 2 },
+  miniBtn: { width: 40, height: 44, alignItems: "center", justifyContent: "center" },
+  miniPlay: { width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, marginHorizontal: 2 },
+
+  discDock: { position: "absolute", right: 16, bottom: 2, elevation: 8 },
+  discWrap: { width: DISC, height: DISC },
   disc: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: "#111",
+    width: DISC, height: DISC, borderRadius: DISC / 2, backgroundColor: "#111",
     borderWidth: 2, borderColor: "rgba(255,255,255,0.3)", overflow: "hidden",
     justifyContent: "center", alignItems: "center",
   },
-  discArt: { width: "100%", height: "100%", borderRadius: 22, position: "absolute", top: 0, left: 0 },
-  discHole: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#000", borderWidth: 1, borderColor: "rgba(255,255,255,0.4)" },
-
-  // Video mini box: rectangular instead of circular, shows the actual
-  // playing frame (muted-scale preview) rather than static artwork.
-  videoBoxWrap: {},
+  discPlaying: { borderColor: ACCENT },
+  discArt: { width: "100%", height: "100%", borderRadius: DISC / 2, position: "absolute", top: 0, left: 0 },
+  discHole: { width: 12, height: 12, borderRadius: 6, backgroundColor: "#000", borderWidth: 1, borderColor: "rgba(255,255,255,0.4)" },
+  discGloss: { position: "absolute", top: 0, left: 0, width: DISC, height: DISC, borderRadius: DISC / 2 },
   videoBox: {
-    width: 60, height: 40, borderRadius: 10, backgroundColor: "#111",
+    width: 72, height: 48, borderRadius: 10, backgroundColor: "#111",
     borderWidth: 2, borderColor: "rgba(255,255,255,0.3)", overflow: "hidden",
   },
-  videoBoxFallback: { justifyContent: "center", alignItems: "center" },
+
+  collapseRow: { position: "absolute", left: 20, bottom: Platform.OS === "android" ? 64 : 24 },
+  navMiniPill: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(20,20,25,0.7)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.25)", justifyContent: "center", alignItems: "center",
+  },
 });

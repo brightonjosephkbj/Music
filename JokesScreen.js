@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useRef, useEffect } from "react";
 import {
   View,
@@ -148,7 +149,7 @@ export default function JokesScreen({ onBack }) {
       setFeed((prev) =>
         prev.map((it) =>
           it.key === key
-            ? { key, status: "error", message: err.message || "Couldn't load a joke" }
+            ? { key, status: "error", message: friendlyError(err, "Couldn't load a joke") }
             : it
         )
       );

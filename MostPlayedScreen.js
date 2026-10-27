@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList, Image, TouchableOpacity } from "react
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { getMostPlayed } from "./listeningHistory";
+import { reportScrollY } from "./shellScroll";
 
 const ONYX = "#020202";
 const CANDY_BLUE = "#B2D5E5";
@@ -120,7 +121,7 @@ export default function MostPlayedScreen({ onBack, onTrackPress }) {
         <Text style={styles.empty}>Nothing played in this range yet.</Text>
       )}
 
-      <FlatList
+      <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
         data={items}
         keyExtractor={(e) => `${e.provider}-${e.id}`}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}

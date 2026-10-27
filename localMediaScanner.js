@@ -1,6 +1,51 @@
 import * as MediaLibrary from "expo-media-library/legacy";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { parseLibraryFilename } from "./libraryFileNaming";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const CACHE_KEY = "device_media_cache_v1";
+const THUMB_KEY = "device_video_thumbs_v1";
+const THUMB_CONCURRENCY = 3;
+
+// Last scan result, saved on the phone so the Library can paint instantly
+// after an app restart while a fresh scan runs in the background.
+export async function getCachedDeviceMedia() {
+  try {
+    const raw = await AsyncStorage.getItem(CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadThumbs() {
+  try {
+    return JSON.parse((await AsyncStorage.getItem(THUMB_KEY)) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+// Makes missing video thumbnails a few at a time AFTER the scan has already
+// returned, and saves them for the next scan.
+async function fillThumbnails(assets, thumbs) {
+  const todo = assets.filter((a) => !thumbs[a.id]);
+  if (todo.length === 0) return;
+  let next = 0;
+  async function worker() {
+    while (next < todo.length) {
+      const a = todo[next++];
+      try {
+        const { uri } = await VideoThumbnails.getThumbnailAsync(a.uri, { time: 1000 });
+        thumbs[a.id] = uri;
+      } catch {}
+    }
+  }
+  await Promise.all(Array.from({ length: THUMB_CONCURRENCY }, worker));
+  try {
+    await AsyncStorage.setItem(THUMB_KEY, JSON.stringify(thumbs));
+  } catch {}
+}
 
 // Scans the WHOLE device for audio/video, not just the app's own "B24
 // Music" album. Previously scoped to just that album to avoid picking up
@@ -73,12 +118,12 @@ export async function scanDeviceMedia() {
       "video assets on device"
     );
 
-    return {
-      granted: true,
-      audio: audioResult.assets.map((a) => toLibraryItem(a, "audio")),
-      video: await Promise.all(videoResult.assets.map(toVideoLibraryItem)),
-      error: null,
-    };
+    const thumbs = await loadThumbs();
+    const audio = audioResult.assets.map((a) => toLibraryItem(a, "audio"));
+    const video = videoResult.assets.map((a) => toLibraryItem(a, "video", thumbs[a.id] || null));
+    fillThumbnails(videoResult.assets, thumbs).catch(() => {});
+    AsyncStorage.setItem(CACHE_KEY, JSON.stringify({ audio, video })).catch(() => {});
+    return { granted: true, audio, video, error: null };
   } catch (err) {
     console.error("[scanDeviceMedia] getAssetsAsync threw:", err);
     return { granted: true, audio: [], video: [], error: `Scan failed: ${err.message}` };

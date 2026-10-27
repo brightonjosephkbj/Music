@@ -43,7 +43,8 @@ API_BASE = os.environ.get(
 def get_runtime_version():
     with open("app.json") as f:
         cfg = json.load(f)
-    return cfg["expo"]["version"]
+    rv = cfg["expo"].get("runtimeVersion")
+    return rv if isinstance(rv, str) else cfg["expo"]["version"]
 
 
 def run_expo_export():

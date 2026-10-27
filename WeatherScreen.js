@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendlyError";
 import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
@@ -53,7 +54,7 @@ export default function WeatherScreen({ onBack }) {
         weather,
       });
     } catch (err) {
-      setLocationError(err.message || "Couldn't get your location");
+      setLocationError(friendlyError(err, "Couldn't get your location"));
     } finally {
       setLocationLoading(false);
     }
@@ -100,7 +101,7 @@ export default function WeatherScreen({ onBack }) {
       const weather = await fetchCurrentWeather(place.latitude, place.longitude);
       setSearchResult({ place, weather });
     } catch (err) {
-      setSearchError(err.message || "Search failed");
+      setSearchError(friendlyError(err, "Search failed"));
       setSearchResult(null);
     } finally {
       setSearching(false);
