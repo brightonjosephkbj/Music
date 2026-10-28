@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- ring: a circle drawn as a stroked path (two half-circle arcs) -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="7"
+        android:pathData="M48,48m-41.5,0a41.5,41.5 0 1,0 83,0a41.5,41.5 0 1,0 -83,0" />
+    <!-- play triangle -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M38,30L38,66L68,48Z" />
+</vector>

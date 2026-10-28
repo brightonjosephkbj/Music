@@ -68,7 +68,8 @@
       [
         "expo-media-control",
         {
-          "enableBackgroundAudio": true
+          "enableBackgroundAudio": true,
+          "notificationIcon": "./assets/notification_icon.xml"
         }
       ],
       [
