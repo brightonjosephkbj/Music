@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,6 +34,11 @@ jobs:
 
       - name: Expo prebuild (generate native Android project)
         run: npx expo prebuild --platform android --clean
+
+      - name: Set versionCode from run number
+        run: |
+          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          grep -n "versionCode" android/app/build.gradle
 
       - name: Fix Gradle Metaspace OOM
         run: |
@@ -86,3 +94,10 @@ jobs:
         with:
           name: obsidian-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk B24music-v${{ github.run_number }}.apk
+          gh release create "v${{ github.run_number }}" B24music-v${{ github.run_number }}.apk --repo ${{ github.repository }} --title "B24music build ${{ github.run_number }}" --generate-notes --latest
