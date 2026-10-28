@@ -27,6 +27,8 @@ class B24WallpaperService : WallpaperService() {
         private var holderRef: SurfaceHolder? = null
         private var visibleNow = false
         private var loadedStamp = 0L
+        private var prepared = false
+        private var retries = 0
 
         private fun videoFile(): File {
             return File(this@B24WallpaperService.filesDir, "wallpaper.mp4")
@@ -57,6 +59,7 @@ class B24WallpaperService : WallpaperService() {
         private fun release() {
             val p = player
             player = null
+            prepared = false
             if (p != null) {
                 try { p.setSurface(null) } catch (e: Exception) {}
                 try { p.stop() } catch (e: Exception) {}
@@ -85,6 +88,9 @@ class B24WallpaperService : WallpaperService() {
                 mp.setVolume(0f, 0f)
                 mp.isLooping = true
                 mp.setOnPreparedListener { p ->
+                    if (p !== player) return@setOnPreparedListener
+                    prepared = true
+                    retries = 0
                     try { p.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING) } catch (e: Exception) {}
                     if (visibleNow) {
                         try { p.start() } catch (e: Exception) {}
@@ -93,6 +99,11 @@ class B24WallpaperService : WallpaperService() {
                 mp.setOnErrorListener { _, what, extra ->
                     Log.e("B24Wallpaper", "player error " + what + " " + extra)
                     release()
+                    if (what == -38 && retries < 2 && visibleNow && holderRef != null) {
+                        retries++
+                        start()
+                        return@setOnErrorListener true
+                    }
                     showMessage("Video could not play|error " + what + " / " + extra + "|try a short H.264 mp4")
                     true
                 }
@@ -124,10 +135,14 @@ class B24WallpaperService : WallpaperService() {
                 if (player == null || videoFile().lastModified() != loadedStamp) {
                     start()
                 } else {
-                    try { player?.start() } catch (e: Exception) { start() }
+                    if (prepared) {
+                        try { player?.start() } catch (e: Exception) { start() }
+                    }
                 }
             } else {
-                try { player?.pause() } catch (e: Exception) {}
+                if (prepared) {
+                    try { player?.pause() } catch (e: Exception) {}
+                }
             }
         }
 

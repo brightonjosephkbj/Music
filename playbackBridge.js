@@ -45,6 +45,7 @@ export function getPlaybackState() {
 let mediaControlsReady = false;
 let lastTrackKey = null;
 let lastIsPlaying = null;
+let lastArtwork = null;
 
 function syncMediaControls() {
   if (!mediaControlsReady) return;
@@ -52,8 +53,11 @@ function syncMediaControls() {
   const track = state.track;
   const trackKey = track ? `${track.provider || ""}-${track.id}` : null;
 
-  if (trackKey !== lastTrackKey) {
+  const artworkNow = track ? track.artwork || null : null;
+  if (trackKey !== lastTrackKey || artworkNow !== lastArtwork) {
     lastTrackKey = trackKey;
+    lastArtwork = artworkNow;
+    lastIsPlaying = null; // force playback state to be re-pushed after metadata
     if (track) {
       MediaControl.updateMetadata({
         title: track.title || "Unknown title",
