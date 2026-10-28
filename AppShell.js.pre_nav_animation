@@ -1,0 +1,316 @@
+import React, { useRef, useEffect } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Image } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { VideoView } from "expo-video";
+import { useDownloads } from "./DownloadsContext";
+import { resumeAIPlaylists } from "./aiPlaylist";
+import useAppResume from "./useAppResume";
+
+// Shared shell: renders whichever screen is active as children, then
+// overlays the persistent bottom nav + mini player trigger on top of it.
+//
+// Two states:
+//   State A (default) - full nav pill (Home/Library/Search/Settings) with a
+//     spinning CD disc (audio) or small video box (video) floating to its
+//     right, only when something's playing.
+//   State B (player expanded) - nav pill shrinks to a small 20px-radius pill
+//     on the left; the caller (App.js) is responsible for rendering the
+//     actual expanded Player/full-screen video on top of this shell.
+const NAV_ITEMS = [
+  { key: "home", label: "Home", icon: "home-outline", iconActive: "home" },
+  { key: "library", label: "Library", icon: "albums-outline", iconActive: "albums" },
+  { key: "search", label: "Search", icon: "search-outline", iconActive: "search" },
+];
+
+const ACCENT = "#FF6B6B";
+const GLASS_BORDER = "rgba(255,255,255,0.25)";
+
+export default function AppShell({
+  children,
+  activeNav,
+  screenKey,
+  onNavPress,
+  nowPlaying,      // track object, or null
+  engine,          // result of usePlaybackEngine(nowPlaying), or null
+  playerExpanded,  // true once the user has tapped into State B
+  onExpandPress,   // tap the disc/video box -> expand
+  onCollapsePress, // tap the shrunken nav pill -> collapse back to State A
+  onSkipNext,      // skip to the next track in the queue
+  onSkipPrev,      // skip to the previous track in the queue
+}) {
+  const { hasActiveDownloads } = useDownloads();
+
+  // Screen transition: changes only when the selected screen changes,
+  // not when playback position or other props update.
+  const screenOpacity = useRef(new Animated.Value(1)).current;
+  const screenTranslateX = useRef(new Animated.Value(0)).current;
+  const previousScreenKey = useRef(screenKey);
+
+  useEffect(() => {
+    if (previousScreenKey.current === screenKey) return;
+
+    previousScreenKey.current = screenKey;
+    screenOpacity.setValue(0);
+    screenTranslateX.setValue(14);
+
+    const transition = Animated.parallel([
+      Animated.timing(screenOpacity, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(screenTranslateX, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]);
+
+    transition.start();
+    return () => transition.stop();
+  }, [screenKey, screenOpacity, screenTranslateX]);
+
+  // Flickering blue dot while any download is active.
+  const dotOpacity = useRef(new Animated.Value(1)).current;
+  // Songs the server finished while the app was closed get added to the
+  // AI playlist on start and whenever the app comes back to the foreground.
+  useEffect(() => {
+    resumeAIPlaylists().catch(() => {});
+  }, []);
+  useAppResume(() => {
+    resumeAIPlaylists().catch(() => {});
+  }, 15000);
+
+  useEffect(() => {
+    let loop;
+    if (hasActiveDownloads) {
+      loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(dotOpacity, { toValue: 0.2, duration: 500, useNativeDriver: true }),
+          Animated.timing(dotOpacity, { toValue: 1, duration: 500, useNativeDriver: true }),
+        ])
+      );
+      loop.start();
+    } else {
+      dotOpacity.setValue(1);
+    }
+    return () => loop && loop.stop();
+  }, [hasActiveDownloads]);
+  const discRotation = useRef(new Animated.Value(0)).current;
+  const spinLoop = useRef(null);
+
+  const isVideo = nowPlaying?.type === "video";
+  const isPlaying = !!engine?.isPlaying;
+
+  useEffect(() => {
+    if (nowPlaying && !isVideo && isPlaying) {
+      spinLoop.current = Animated.loop(
+        Animated.timing(discRotation, {
+          toValue: 1,
+          duration: 6000,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      );
+      spinLoop.current.start();
+    } else {
+      spinLoop.current && spinLoop.current.stop();
+    }
+    return () => spinLoop.current && spinLoop.current.stop();
+    // Rotation deliberately keeps its current value (not reset) when paused,
+    // so resuming playback continues the spin from wherever it left off
+    // rather than snapping back to 0deg.
+  }, [nowPlaying, isVideo, isPlaying]);
+
+  const spinDeg = discRotation.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+
+  return (
+    <View style={styles.root}>
+      {/* Active screen renders here, full bleed underneath the nav */}
+      <Animated.View
+        style={[
+          styles.screenArea,
+          {
+            opacity: screenOpacity,
+            transform: [{ translateX: screenTranslateX }],
+          },
+        ]}
+      >
+        {children}
+      </Animated.View>
+
+      {/* Persistent nav shell - collapses to a small pill in State B */}
+      <View style={styles.navShellRow} pointerEvents="box-none">
+        {playerExpanded ? (
+          <TouchableOpacity style={styles.navMiniPill} onPress={onCollapsePress}>
+            <Text style={styles.navMiniGlyph}>⌄</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            <View style={[styles.navPill, nowPlaying && styles.navPillCompact]}>
+              {NAV_ITEMS.map((item) => {
+                const active = item.key === activeNav;
+                const showDot = item.key === "library" && hasActiveDownloads;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    style={[
+                      styles.navItem,
+                      nowPlaying && styles.navItemCompact,
+                      active && styles.navItemActive,
+                    ]}
+                    onPress={() => onNavPress && onNavPress(item.key)}
+                  >
+                    <View style={{ alignItems: "center" }}>
+                      <View>
+                        <Ionicons
+                          name={active ? item.iconActive : item.icon}
+                          size={nowPlaying ? 20 : 22}
+                          color={active ? "#fff" : "rgba(255,255,255,0.7)"}
+                        />
+                        {showDot && (
+                          <Animated.View
+                            style={[styles.downloadDot, { opacity: dotOpacity, position: "absolute", top: -2, right: -4 }]}
+                          />
+                        )}
+                      </View>
+                      {active && (
+                        <Text style={[styles.navItemText, nowPlaying && styles.navItemTextCompact, styles.navItemTextActive, { marginTop: 2 }]}>
+                          {item.label}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Compact transport cluster: prev, disc/video (tap to expand), play/pause, next.
+                Only rendered once something's loaded - matches the old disc-only behavior
+                for "nothing playing", just with real controls now that a queue exists. */}
+            {nowPlaying && (
+              <View style={styles.playerCluster}>
+                <TouchableOpacity
+                  onPress={() => onSkipPrev && onSkipPrev()}
+                  style={styles.transportMini}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                >
+                  <Text style={styles.transportMiniGlyph}>{"‹‹"}</Text>
+                </TouchableOpacity>
+
+                {!isVideo ? (
+                  <TouchableOpacity onPress={onExpandPress} style={styles.discWrap}>
+                    <Animated.View style={[styles.disc, { transform: [{ rotate: spinDeg }] }]}>
+                      {!!nowPlaying.artwork && (
+                        <Image
+                          source={{ uri: nowPlaying.artwork }}
+                          style={styles.discArt}
+                          resizeMode="cover"
+                          onError={(e) => console.warn("[disc artwork] failed to load:", nowPlaying.artwork, e.nativeEvent?.error)}
+                        />
+                      )}
+                      <View style={styles.discHole} />
+                    </Animated.View>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity onPress={onExpandPress} style={styles.videoBoxWrap}>
+                    {engine?.videoPlayer ? (
+                      <VideoView
+                        player={engine.videoPlayer}
+                        style={styles.videoBox}
+                        contentFit="cover"
+                        nativeControls={false}
+                      />
+                    ) : (
+                      <View style={[styles.videoBox, styles.videoBoxFallback]} />
+                    )}
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  onPress={() => engine?.toggle && engine.toggle()}
+                  style={styles.transportMini}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                >
+                  <Ionicons name={isPlaying ? "pause" : "play"} size={13} color="#fff" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => onSkipNext && onSkipNext()}
+                  style={styles.transportMini}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                >
+                  <Text style={styles.transportMiniGlyph}>{"››"}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const _RN = require("react-native");
+const _NAV_PAD = _RN.Platform.OS === "android" ? 20 : 0; // raise bars above Android system buttons
+const _COMPACT = _RN.Dimensions.get("window").width < 360;
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: "#000" },
+  screenArea: { flex: 1 },
+  navShellRow: {
+    position: "absolute", left: _COMPACT ? 12 : 20, right: _COMPACT ? 12 : 20, bottom: 24 + _NAV_PAD, flexDirection: "row", alignItems: "center",
+  },
+  navPill: {
+    flex: 1, minWidth: 0, flexShrink: 1, overflow: "hidden", flexDirection: "row", backgroundColor: "rgba(20,20,25,0.55)", borderRadius: 30,
+    borderWidth: 1, borderColor: GLASS_BORDER, paddingVertical: 8, paddingHorizontal: 6, justifyContent: "space-around",
+  },
+  // Nav pill shares the row with the transport cluster once something's
+  // playing, so it needs to give up some breathing room.
+  navPillCompact: { paddingHorizontal: 3 },
+  navItem: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  navItemCompact: { paddingHorizontal: _COMPACT ? 4 : 7 },
+  navItemActive: { backgroundColor: "rgba(199,125,255,0.28)" },
+  navItemText: { color: "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: "600" },
+  navItemLabelRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  downloadDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#4EA1FF" },
+  navItemTextCompact: { fontSize: _COMPACT ? 10 : 11 },
+  navItemTextActive: { color: "#fff" },
+
+  // Compact prev/disc-or-video/play-pause/next cluster, shown to the right
+  // of the nav pill whenever a track is loaded.
+  playerCluster: {
+    flexDirection: "row", alignItems: "center", marginLeft: _COMPACT ? 4 : 8,
+    backgroundColor: "rgba(20,20,25,0.55)", borderRadius: 26,
+    borderWidth: 1, borderColor: GLASS_BORDER, paddingHorizontal: 4, paddingVertical: 4,
+  },
+  transportMini: { width: _COMPACT ? 22 : 26, height: 44, justifyContent: "center", alignItems: "center" },
+  transportMiniGlyph: { color: "#fff", fontSize: 13, fontWeight: "700" },
+
+  // State B: shrunken nav pill, tucked to the left, tap to collapse the player.
+  navMiniPill: {
+    width: 44, height: 44, borderRadius: 20, backgroundColor: "rgba(20,20,25,0.7)",
+    borderWidth: 1, borderColor: GLASS_BORDER, justifyContent: "center", alignItems: "center",
+  },
+  navMiniGlyph: { color: "#fff", fontSize: 18, fontWeight: "700" },
+
+  discWrap: {},
+  disc: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: "#111",
+    borderWidth: 2, borderColor: "rgba(255,255,255,0.3)", overflow: "hidden",
+    justifyContent: "center", alignItems: "center",
+  },
+  discArt: { width: "100%", height: "100%", borderRadius: 22, position: "absolute", top: 0, left: 0 },
+  discHole: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#000", borderWidth: 1, borderColor: "rgba(255,255,255,0.4)" },
+
+  // Video mini box: rectangular instead of circular, shows the actual
+  // playing frame (muted-scale preview) rather than static artwork.
+  videoBoxWrap: {},
+  videoBox: {
+    width: 60, height: 40, borderRadius: 10, backgroundColor: "#111",
+    borderWidth: 2, borderColor: "rgba(255,255,255,0.3)", overflow: "hidden",
+  },
+  videoBoxFallback: { justifyContent: "center", alignItems: "center" },
+});

@@ -4,6 +4,8 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
+import { VideoView, useVideoPlayer } from "expo-video";
+import { File } from "expo-file-system";
 import {
   DEFAULT_BG, loadHomeBackground, saveHomeBackground, importIntoApp, discardImported,
 } from "./homeBackground";
@@ -13,27 +15,58 @@ import WallpaperButton from "./WallpaperButton";
 const MAX_BYTES = 20 * 1024 * 1024;
 const isVideo = (d) =>
   !!d.localUri && (d.type === "video" || /\.(mp4|mkv|webm|mov)$/i.test(d.localUri));
+const mb = (n) => (n ? (n / 1048576).toFixed(1) + " MB" : "");
+
+function PreviewVideo({ uri, onError }) {
+  const player = useVideoPlayer({ uri }, (p) => {
+    p.loop = true;
+    p.muted = true;
+    try { p.audioMixingMode = "mixWithOthers"; } catch {}
+    p.play();
+  });
+  useEffect(() => {
+    const sub = player.addListener("statusChange", ({ status }) => {
+      if (status === "error") onError && onError();
+    });
+    return () => sub.remove();
+  }, [player]);
+  return (
+    <VideoView
+      player={player}
+      style={StyleSheet.absoluteFill}
+      contentFit="cover"
+      nativeControls={false}
+    />
+  );
+}
 
 export default function HomeBackgroundScreen({ onBack }) {
   const [bg, setBg] = useState(DEFAULT_BG);
   const [videos, setVideos] = useState([]);
   const [showLib, setShowLib] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [missing, setMissing] = useState(false);
+  const [broken, setBroken] = useState(false);
 
   useEffect(() => {
-    loadHomeBackground(true).then(setBg);
+    loadHomeBackground(true).then((b) => {
+      setBg(b);
+      try { if (b.uri && !new File(b.uri).exists) setMissing(true); } catch {}
+    });
     getDownloads().then((d) => setVideos((d || []).filter(isVideo))).catch(() => {});
   }, []);
 
-  const apply = async (patch) => setBg(await saveHomeBackground({ ...bg, ...patch }));
+  const apply = async (patch) => {
+    setMissing(false);
+    setBroken(false);
+    setBg(await saveHomeBackground({ ...bg, ...patch }));
+  };
 
   const pickFromGallery = async () => {
+    if (busy) return;
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return Alert.alert("Permission needed", "Allow photo access to pick a background.");
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images", "videos"],
-      quality: 0.8,
-    });
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images", "videos"], quality: 0.8 });
     if (res.canceled) return;
     const a = res.assets[0];
     const type = a.type === "video" ? "video" : "image";
@@ -41,23 +74,51 @@ export default function HomeBackgroundScreen({ onBack }) {
       return Alert.alert("Video too large", "Pick a clip under 20 MB. Short loops work best.");
     }
     setBusy(true);
-    const ext = (a.uri.split(".").pop() || (type === "video" ? "mp4" : "jpg")).split("?")[0];
-    const uri = await importIntoApp(a.uri, ext);
-    discardImported(bg.uri);
-    await apply({ type, uri });
-    setBusy(false);
+    try {
+      const ext = (a.uri.split(".").pop() || (type === "video" ? "mp4" : "jpg")).split("?")[0];
+      const uri = await importIntoApp(a.uri, ext);
+      const old = bg.uri;
+      await apply({ type, uri, name: a.fileName || (type === "video" ? "Gallery video" : "Gallery image"), size: a.fileSize || 0 });
+      discardImported(old);
+    } catch (e) {
+      Alert.alert("Couldn't set background", String((e && e.message) || e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const pickFromLibrary = async (d) => {
-    discardImported(bg.uri);
-    await apply({ type: "video", uri: d.localUri });
-    setShowLib(false);
+    if (busy) return;
+    let size = 0;
+    try { size = new File(d.localUri).size || 0; } catch {}
+    if (size > MAX_BYTES) {
+      return Alert.alert("Video too large", "Pick a clip under 20 MB. Short loops work best.");
+    }
+    setBusy(true);
+    try {
+      const old = bg.uri;
+      await apply({ type: "video", uri: d.localUri, name: d.title || "Library video", size });
+      discardImported(old);
+      setShowLib(false);
+    } catch (e) {
+      Alert.alert("Couldn't set background", String((e && e.message) || e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const remove = async () => {
     discardImported(bg.uri);
+    setMissing(false);
+    setBroken(false);
     setBg(await saveHomeBackground({ ...DEFAULT_BG, dim: bg.dim }));
   };
+
+  const problem = missing
+    ? "Selected file is missing. Pick a video again."
+    : broken
+    ? "This video can't be played. Pick a different one (short H.264 mp4)."
+    : null;
 
   return (
     <ScrollView style={st.screen} contentContainerStyle={{ padding: 20, paddingBottom: 130 }}>
@@ -71,26 +132,39 @@ export default function HomeBackgroundScreen({ onBack }) {
       </View>
 
       <View style={st.preview}>
-        {bg.uri && bg.type === "image" && (
+        {bg.uri && bg.type === "image" && !missing && (
           <Image source={{ uri: bg.uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
         )}
-        {bg.uri && bg.type === "video" && (
-          <View style={[StyleSheet.absoluteFill, st.center]}>
-            <Ionicons name="videocam" size={34} color="#C89BFF" />
-            <Text style={st.hint}>Video background set</Text>
-          </View>
+        {bg.uri && bg.type === "video" && !missing && (
+          <PreviewVideo key={bg.uri} uri={bg.uri} onError={() => setBroken(true)} />
         )}
         {!bg.uri && <Text style={st.hint}>No background set</Text>}
-        {!!bg.uri && (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: `rgba(2,2,2,${bg.dim})` }]} />
+        {!!bg.uri && missing && (
+          <View style={st.center}>
+            <Ionicons name="alert-circle" size={34} color="#FF7A90" />
+          </View>
+        )}
+        {!!bg.uri && !missing && (
+          <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: `rgba(2,2,2,${bg.dim})` }]} />
         )}
       </View>
 
-      {bg && bg.type === "video" && <WallpaperButton style={{ marginBottom: 12 }} />}
+      {!!bg.uri && (
+        <View style={{ marginBottom: 14 }}>
+          <Text numberOfLines={2} style={st.selName}>
+            {bg.name || (bg.type === "video" ? "Selected video" : "Selected image")}
+          </Text>
+          <Text style={st.hint}>{[bg.type, mb(bg.size)].filter(Boolean).join(" · ")}</Text>
+          {!!problem && <Text style={st.problem}>{problem}</Text>}
+        </View>
+      )}
+
+      {bg.type === "video" && !missing && !broken && <WallpaperButton style={{ marginBottom: 12 }} />}
+
       <Pressable style={st.btn} onPress={pickFromGallery} disabled={busy}>
         {busy ? <ActivityIndicator color="#0B0A0F" /> : <Text style={st.btnTxt}>Choose from gallery</Text>}
       </Pressable>
-      <Pressable style={st.btnAlt} onPress={() => setShowLib(!showLib)}>
+      <Pressable style={st.btnAlt} onPress={() => setShowLib(!showLib)} disabled={busy}>
         <Text style={st.btnAltTxt}>Choose from Library videos</Text>
       </Pressable>
 
@@ -100,9 +174,14 @@ export default function HomeBackgroundScreen({ onBack }) {
             <Text style={st.hint}>No downloaded videos found.</Text>
           ) : (
             videos.map((d) => (
-              <Pressable key={`${d.provider || ""}-${d.id}`} style={st.vrow} onPress={() => pickFromLibrary(d)}>
+              <Pressable
+                key={`${d.provider || ""}-${d.id}`}
+                style={[st.vrow, bg.uri === d.localUri && st.vrowOn]}
+                onPress={() => pickFromLibrary(d)}
+              >
                 <Image source={d.artwork ? { uri: d.artwork } : undefined} style={st.vthumb} />
                 <Text numberOfLines={2} style={st.vtitle}>{d.title}</Text>
+                {bg.uri === d.localUri && <Ionicons name="checkmark-circle" size={20} color="#C89BFF" />}
               </Pressable>
             ))
           )}
@@ -135,15 +214,18 @@ const st = StyleSheet.create({
   title: { color: "#F5F3FA", fontSize: 28, fontWeight: "800" },
   preview: {
     height: 180, borderRadius: 22, overflow: "hidden", backgroundColor: "#1A1822",
-    alignItems: "center", justifyContent: "center", marginBottom: 16,
+    alignItems: "center", justifyContent: "center", marginBottom: 12,
   },
   center: { alignItems: "center", justifyContent: "center" },
-  hint: { color: "#B8B3C4", fontSize: 13, marginTop: 6 },
+  hint: { color: "#B8B3C4", fontSize: 13, marginTop: 4 },
+  selName: { color: "#F5F3FA", fontSize: 15, fontWeight: "700" },
+  problem: { color: "#FF7A90", fontSize: 13, marginTop: 6, fontWeight: "600" },
   btn: { backgroundColor: "#C89BFF", borderRadius: 16, padding: 14, alignItems: "center" },
   btnTxt: { color: "#0B0A0F", fontWeight: "800", fontSize: 15 },
   btnAlt: { marginTop: 10, backgroundColor: "#1A1822", borderRadius: 16, padding: 14, alignItems: "center" },
   btnAltTxt: { color: "#F5F3FA", fontWeight: "700", fontSize: 15 },
-  vrow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 12 },
+  vrow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, paddingHorizontal: 6, gap: 12, borderRadius: 12 },
+  vrowOn: { backgroundColor: "#1A1822" },
   vthumb: { width: 64, height: 44, borderRadius: 8, backgroundColor: "#1A1822" },
   vtitle: { flex: 1, color: "#F5F3FA", fontSize: 14 },
   section: { color: "#B8B3C4", fontSize: 13, fontWeight: "700", marginTop: 22, marginBottom: 10 },
