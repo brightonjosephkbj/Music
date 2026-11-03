@@ -15,6 +15,7 @@
       }
     },
     "android": {
+      "package": "com.anonymous.b24sound",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0B0B0F"
@@ -115,7 +116,8 @@
           }
         }
       ],
-      "./plugins/withLiveWallpaper"
+      "./plugins/withLiveWallpaper",
+      "expo-secure-store"
     ],
     "runtimeVersion": "1.2.0",
     "updates": {

@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE, gatewayHeaders } from "./apiClient";
 
 let appVersion = "unknown";
@@ -8,8 +9,42 @@ try {
 } catch {}
 
 let currentScreen = "unknown";
+const DIAGNOSTICS_CONSENT_KEY = "b24_diagnostics_opt_in_v1";
+const SAFE_ERROR_TYPES = new Set([
+  "Error", "TypeError", "ReferenceError", "SyntaxError", "RangeError",
+  "URIError", "EvalError", "NetworkError", "AbortError", "Invariant Violation",
+]);
+const SAFE_SOURCES = new Set(["global", "render", "js"]);
+let diagnosticsEnabled = false;
+let diagnosticsChoiceChanged = false;
+const diagnosticsConsentReady = Promise.resolve()
+  .then(() => AsyncStorage.getItem(DIAGNOSTICS_CONSENT_KEY))
+  .then((value) => {
+    if (!diagnosticsChoiceChanged) diagnosticsEnabled = value === "1";
+  })
+  .catch(() => {});
+
 export function setReportScreen(name) {
-  currentScreen = name || "unknown";
+  currentScreen = String(name || "unknown").replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 60) || "unknown";
+}
+
+export async function getDiagnosticsConsent() {
+  await diagnosticsConsentReady;
+  return diagnosticsEnabled;
+}
+
+export async function setDiagnosticsConsent(enabled) {
+  diagnosticsChoiceChanged = true;
+  diagnosticsEnabled = Boolean(enabled);
+  await diagnosticsConsentReady;
+  await AsyncStorage.setItem(DIAGNOSTICS_CONSENT_KEY, diagnosticsEnabled ? "1" : "0");
+  return diagnosticsEnabled;
+}
+
+function diagnosticErrorType(error) {
+  const type = SAFE_ERROR_TYPES.has(error?.name) ? error.name : "Error";
+  const status = String(error?.message || "").match(/\b(?:status|http)\s*:?\s*([45]\d\d)\b/i);
+  return status ? `${type} HTTP ${status[1]}` : type;
 }
 
 const seen = new Set();
@@ -17,9 +52,10 @@ let sent = 0;
 
 export function reportError(error, { fatal = false, source = "js" } = {}) {
   try {
-    if (sent >= 8) return;
-    const message = String(error?.message || error || "unknown error").slice(0, 300);
-    const key = source + message;
+    if (!diagnosticsEnabled || sent >= 8) return;
+    const safeSource = SAFE_SOURCES.has(source) ? source : "js";
+    const category = diagnosticErrorType(error);
+    const key = `${safeSource}:${category}`;
     if (seen.has(key)) return;
     seen.add(key);
     sent += 1;
@@ -31,9 +67,9 @@ export function reportError(error, { fatal = false, source = "js" } = {}) {
         os: Platform.OS,
         osVersion: String(Platform.Version),
         screen: currentScreen,
-        fatal,
-        message: `[${source}] ${message}`,
-        stack: String(error?.stack || "").slice(0, 1500),
+        fatal: Boolean(fatal),
+        message: `[${safeSource}] ${category}`,
+        stack: "",
       }),
     }).catch(() => {});
   } catch {}

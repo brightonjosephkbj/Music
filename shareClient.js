@@ -4,15 +4,12 @@
 // Mirrors apiClient.js's gatewayFetch/authedHeaders pattern.
 // ---------------------------------------------------------------------------
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import { API_BASE, authedHeaders } from "./apiClient";
-
-const AUTH_STORAGE_KEY = "b24_auth";
+import { getStoredAuth } from "./authStorage";
 
 export async function getCurrentUser() {
-  const raw = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
-  return raw ? JSON.parse(raw) : null;
+  return getStoredAuth();
 }
 
 // Finds a user by username or full handle. Returns the profile object,

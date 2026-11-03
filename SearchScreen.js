@@ -1,5 +1,5 @@
 import { friendlyError } from "./friendlyError";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -27,8 +27,10 @@ import { lightningExtract } from "./urlFetchClient";
 import { buildLibraryFilename } from "./libraryFileNaming";
 import { saveDownloadToSharedStorage } from "./mediaLibrarySave";
 import { reportScrollY } from "./shellScroll";
+import { fetchWithTimeout } from "./fetchWithTimeout";
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
+const SEARCH_TIMEOUT_MS = 20000;
 const JET_BLACK = "#1D1D1D";
 const ORCHID = "#E5BDDF";
 const GLASS_BG = "rgba(20,20,25,0.55)";
@@ -115,6 +117,8 @@ export default function SearchScreen({ onTrackPress }) {
   const [downloadedIds, setDownloadedIds] = useState(() => new Set());
 
   const [ytResults, setYtResults] = useState([]);
+  const searchRequestId = useRef(0);
+  const searchAbortController = useRef(null);
   const [resolvingIds, setResolvingIds] = useState(() => new Set());
 
   // Quality-picker sheet - opened for a YouTube result, closed by tapping
@@ -149,6 +153,11 @@ export default function SearchScreen({ onTrackPress }) {
   };
 
   const [recents, setRecents] = useState([]);
+  useEffect(() => () => {
+    searchRequestId.current += 1;
+    searchAbortController.current?.abort();
+    searchAbortController.current = null;
+  }, []);
   useEffect(() => {
     AsyncStorage.getItem(RECENTS_KEY)
       .then((raw) => { if (raw) setRecents(JSON.parse(raw)); })
@@ -168,45 +177,91 @@ export default function SearchScreen({ onTrackPress }) {
     const q = (typeof override === "string" ? override : query).trim();
     setShowSuggest(false);
     if (typeof override === "string") setQuery(override);
-    if (!q) return;
+    if (!q) {
+      searchRequestId.current += 1;
+      searchAbortController.current?.abort();
+      searchAbortController.current = null;
+      setLoading(false);
+      return;
+    }
+    const requestId = ++searchRequestId.current;
+    searchAbortController.current?.abort();
+    const requestController = new AbortController();
+    searchAbortController.current = requestController;
     saveRecent(q);
     setLoading(true);
     setError(null);
     setSearched(true);
     try {
       const params = new URLSearchParams({ q });
+      const headers = await authedHeaders();
+      if (requestId !== searchRequestId.current) return;
 
       const [libraryRes, ytRes] = await Promise.allSettled([
-        fetch(`${API_BASE}/api/apicache/api/music/search?${params.toString()}`, { headers: await authedHeaders() }),
-        fetch(`${API_BASE}/api/downloads/remote/search?${params.toString()}`, { headers: await authedHeaders() }),
+        fetchWithTimeout(
+          `${API_BASE}/api/apicache/api/music/search?${params.toString()}`,
+          { headers, signal: requestController.signal },
+          SEARCH_TIMEOUT_MS,
+          async (response) => {
+            if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
+            return response.json();
+          }
+        ),
+        fetchWithTimeout(
+          `${API_BASE}/api/downloads/remote/search?${params.toString()}`,
+          { headers, signal: requestController.signal },
+          SEARCH_TIMEOUT_MS,
+          async (response) => {
+            if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
+            return response.json();
+          }
+        ),
       ]);
+      if (requestId !== searchRequestId.current) return;
 
       let catList = [];
-      if (libraryRes.status === "fulfilled" && libraryRes.value.ok) {
-        const data = await libraryRes.value.json();
+      const failures = [];
+      if (
+        libraryRes.status === "fulfilled" &&
+        libraryRes.value?.categories &&
+        typeof libraryRes.value.categories === "object" &&
+        !Array.isArray(libraryRes.value.categories)
+      ) {
+        const data = libraryRes.value;
         const cats = data.categories || {};
         setCategories(cats);
         catList = Object.values(cats).flat();
       } else {
         setCategories({});
+        failures.push(libraryRes.status === "rejected" ? libraryRes.reason : new Error("Music search returned an invalid response"));
       }
 
       let ytList = [];
-      if (ytRes.status === "fulfilled" && ytRes.value.ok) {
-        const ytData = await ytRes.value.json();
-        ytList = (ytData.ok ? ytData.data : []) || [];
+      if (ytRes.status === "fulfilled" && ytRes.value?.ok && Array.isArray(ytRes.value.data)) {
+        ytList = ytRes.value.data;
         setYtResults(ytList);
       } else {
         setYtResults([]);
+        failures.push(ytRes.status === "rejected" ? ytRes.reason : new Error(ytRes.value?.error || "Remote search returned an invalid response"));
       }
 
+      if (failures.length === 2) {
+        setError(friendlyError(failures[0], "Search failed"));
+      } else if (failures.length === 1) {
+        setError("Some search sources are unavailable. Showing results from the sources that responded.");
+      }
       syncDownloadedIds(catList, ytList);
     } catch (err) {
-      setError(friendlyError(err, "Search failed"));
-      setCategories({});
-      setYtResults([]);
+      if (requestId === searchRequestId.current) {
+        setError(friendlyError(err, "Search failed"));
+        setCategories({});
+        setYtResults([]);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === searchRequestId.current) {
+        searchAbortController.current = null;
+        setLoading(false);
+      }
     }
   };
 

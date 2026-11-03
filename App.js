@@ -108,14 +108,25 @@ export default function App() {
   const [authResolved, setAuthResolved] = useState(false);
 
   useEffect(() => {
-    getStoredAuth().then(async (user) => {
-      if (user?.token && tokenExpired(user.token)) {
-        await clearStoredAuth();
-        user = null;
-      }
-      setAuthUser(user);
-      setAuthResolved(true);
-    });
+    let active = true;
+    getStoredAuth()
+      .then(async (user) => {
+        if (user?.token && tokenExpired(user.token)) {
+          await clearStoredAuth();
+          user = null;
+        }
+        if (active) {
+          setAuthUser(user);
+          setAuthResolved(true);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAuthUser(null);
+          setAuthResolved(true);
+        }
+      });
+    return () => { active = false; };
   }, []);
 
   const handleSignOut = async () => {
@@ -288,20 +299,21 @@ export default function App() {
   // same track fighting each other.
   const engine = usePlaybackEngine(nowPlaying);
 
-  // Auto-advance once the current track finishes. lastAutoAdvanceIndex
-  // guards against firing twice for the same finish event (didJustFinish
-  // can stay true for more than one render before the next track loads).
-  const lastAutoAdvanceIndex = useRef(null);
+  // Advance once per completed track. The finish event can remain set over
+  // multiple renders, so identify the completed track rather than the queue
+  // index (which changes as soon as the next track starts).
+  const lastAutoAdvanceTrack = useRef(null);
   useEffect(() => {
-    if (engine.didJustFinish) {
-      if (lastAutoAdvanceIndex.current !== queueIndex) {
-        lastAutoAdvanceIndex.current = queueIndex;
+    const finishedTrackKey = engine.finishedTrackKey;
+    if (finishedTrackKey) {
+      if (lastAutoAdvanceTrack.current !== finishedTrackKey) {
+        lastAutoAdvanceTrack.current = finishedTrackKey;
         nextTrack();
       }
     } else {
-      lastAutoAdvanceIndex.current = null;
+      lastAutoAdvanceTrack.current = null;
     }
-  }, [engine.didJustFinish, queueIndex]);
+  }, [engine.finishedTrackKey]);
 
   const goToDrawerScreen = (key) => setActiveDrawerScreen(key);
   const backFromDrawerScreen = () => {

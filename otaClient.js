@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 import appJson from "./app.json";
 import { authedHeaders } from "./apiClient";
+import { fetchWithTimeout } from "./fetchWithTimeout";
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
 
@@ -33,11 +34,15 @@ export async function checkForUpdate() {
     current_runtime_version: String(currentRuntimeVersion),
   });
 
-  const res = await fetch(`${API_BASE}/api/apicache/api/ota/app/version?${params.toString()}`, {
-    headers: await authedHeaders(),
-  });
-  if (!res.ok) throw new Error(`OTA check failed: ${res.status}`);
-  const data = await res.json();
+  const data = await fetchWithTimeout(
+    `${API_BASE}/api/apicache/api/ota/app/version?${params.toString()}`,
+    { headers: await authedHeaders() },
+    15000,
+    async (response) => {
+      if (!response.ok) throw new Error(`OTA check failed: ${response.status}`);
+      return response.json();
+    }
+  );
 
   // Only surface this as a native-update prompt if the backend actually
   // found a newer native version - "ota" or "none" update_type means

@@ -14,8 +14,10 @@ import {
   Modal,
   Pressable,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { gatewayHeaders } from "./apiClient";
+import { clearStoredAuth, getStoredAuth, setStoredAuth, updateStoredAuth } from "./authStorage";
+
+export { clearStoredAuth, getStoredAuth, updateStoredAuth };
 
 // ---------------------------------------------------------------------------
 // Auth screen: dark teal header ("Hello, Welcome" / toggle button) + white
@@ -26,12 +28,11 @@ import { gatewayHeaders } from "./apiClient";
 // on success, enter a new password.
 //
 // Talks to B24_Database through the gateway - same pattern as every other
-// backend call in the app. On successful login/signup, stores the JWT +
-// user record in AsyncStorage under "b24_auth".
+// backend call in the app. Session tokens are stored in SecureStore; the
+// non-sensitive profile record remains in AsyncStorage.
 // ---------------------------------------------------------------------------
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
-const AUTH_STORAGE_KEY = "b24_auth";
 
 const TEAL_DARK = "#0b3d4c";
 const TEAL_MID = "#0f6478";
@@ -101,24 +102,6 @@ async function apiResetPassword(userId, newPassword) {
 // Merges a partial update (e.g. { avatar_url, username, bio }) into the
 // stored auth user and re-persists it. Used after profile edits so the
 // signed-in session reflects the change without a re-login.
-export async function updateStoredAuth(patch) {
-  const raw = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
-  const user = raw ? JSON.parse(raw) : null;
-  if (!user) return null;
-  const updated = { ...user, ...patch };
-  await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
-  return updated;
-}
-
-export async function getStoredAuth() {
-  const raw = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
-  return raw ? JSON.parse(raw) : null;
-}
-
-export async function clearStoredAuth() {
-  await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
-}
-
 // "Continue as Guest" still needs to work with every backend service, and
 // every service here (api-cache, messenger) rejects requests with no valid
 // JWT - there's no such thing as a truly anonymous call anymore. So a
@@ -180,7 +163,7 @@ export default function LoginScreen({ onAuthenticated, allowGuest = true }) {
     try {
       if (mode === "login") {
         const user = await apiLogin(username.trim(), password);
-        await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+        await setStoredAuth(user);
         onAuthenticated?.(user);
       } else {
         await apiSignup(
@@ -191,7 +174,7 @@ export default function LoginScreen({ onAuthenticated, allowGuest = true }) {
           securityAnswer.trim()
         );
         const user = await apiLogin(username.trim(), password);
-        await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+        await setStoredAuth(user);
         onAuthenticated?.(user);
       }
     } catch (e) {
@@ -206,7 +189,7 @@ export default function LoginScreen({ onAuthenticated, allowGuest = true }) {
     setGuestLoading(true);
     try {
       const user = await provisionGuestAccount();
-      await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+      await setStoredAuth(user);
       onAuthenticated?.(user);
     } catch (e) {
       setError("Couldn't start a guest session - check your connection and try again");
@@ -304,6 +287,12 @@ export default function LoginScreen({ onAuthenticated, allowGuest = true }) {
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
+            {allowGuest && (
+              <Text style={styles.guestHint}>
+                Guest access creates a profile on Obsidian's service. You can start without choosing a username or password.
+              </Text>
+            )}
+
             <TouchableOpacity style={styles.submitButton} onPress={handleSubmit} disabled={loading} activeOpacity={0.85}>
               {loading ? (
                 <ActivityIndicator color="#fff" />
@@ -317,7 +306,7 @@ export default function LoginScreen({ onAuthenticated, allowGuest = true }) {
                 {guestLoading ? (
                   <ActivityIndicator color={TEAL_MID} size="small" />
                 ) : (
-                  <Text style={styles.skipButtonText}>Continue as Guest</Text>
+                  <Text style={styles.skipButtonText}>Continue with Guest Profile</Text>
                 )}
               </TouchableOpacity>
             )}
@@ -574,6 +563,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   submitButtonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  guestHint: { color: "#8b999e", fontSize: 12, lineHeight: 17, marginTop: 12, textAlign: "center", paddingHorizontal: 8 },
   skipButton: { marginTop: 18, alignItems: "center" },
   skipButtonText: { color: "#5c8894", fontSize: 13, textDecorationLine: "underline" },
 

@@ -6,12 +6,11 @@
 // every api*.js file - rotate it once, everything picks it up.
 // ---------------------------------------------------------------------------
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy"; /* filesystem_legacy_patch */
+import { getStoredAuth } from "./authStorage";
 
 export const API_BASE = "https://gateway-b0tx.onrender.com";
 const GATEWAY_KEY = "Joy_brightonjosephkbj_Joan";
-const AUTH_STORAGE_KEY = "b24_auth";
 
 // Base headers every gateway request needs. Pass extra headers (like
 // Content-Type for JSON bodies) via the second arg.
@@ -24,8 +23,7 @@ export function gatewayHeaders(extra = {}) {
 // (messages, file ownership checks, profile updates, etc). Safe to call
 // even when logged out; just omits Authorization in that case.
 export async function authedHeaders(extra = {}) {
-  const raw = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
-  const user = raw ? JSON.parse(raw) : null;
+  const user = await getStoredAuth();
   const headers = gatewayHeaders(extra);
   if (user?.token) headers["Authorization"] = `Bearer ${user.token}`;
   return headers;

@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Platform,
+  Switch,
   Alert,
   Image,
   TextInput,
@@ -27,6 +28,7 @@ import WidgetCustomizeScreen from "./WidgetCustomizeScreen";
 import HomeBackgroundScreen from "./HomeBackgroundScreen";
 import { NEU, Raised, Inset, NeuRow, NeuButton, RoundButton, SectionTitle } from "./Neu";
 import { StoragePage, TrashPage } from "./StoragePages";
+import { getDiagnosticsConsent, setDiagnosticsConsent } from "./errorReporter";
 
 const APP_VERSION = appJson.expo.version;
 
@@ -150,6 +152,29 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
   // status: "idle" | "checking" | "upToDate" | "available" | "downloading" | "ready" | "error"
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
+  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(true);
+  const [diagnosticsError, setDiagnosticsError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    getDiagnosticsConsent()
+      .then((enabled) => { if (active) setDiagnosticsEnabled(enabled); })
+      .finally(() => { if (active) setDiagnosticsLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  const changeDiagnosticsConsent = async (enabled) => {
+    setDiagnosticsEnabled(enabled);
+    setDiagnosticsError(null);
+    try {
+      await setDiagnosticsConsent(enabled);
+    } catch {
+      setDiagnosticsEnabled(false);
+      setDiagnosticsError("Couldn't save this choice. Diagnostics are off for this session.");
+      setDiagnosticsConsent(false).catch(() => {});
+    }
+  };
 
   const runningInfo = {
     isEmbedded: Updates.isEmbeddedLaunch,
@@ -499,11 +524,32 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
                 icon="refresh-outline"
                 title="Check for updates"
                 subtitle={status === "checking" ? "Checking..." : "Make sure you're on the latest build"}
-                last
                 onPress={status === "checking" || status === "downloading" ? undefined : runCheck}
                 right={status === "checking" ? <ActivityIndicator color={NEU.orchid} size="small" /> : <Chevron />}
               />
+              <NeuRow
+                icon="shield-checkmark-outline"
+                title="Share diagnostics"
+                subtitle="Optional: when enabled, sends app and OS version, screen, error type, and fatal flag when errors occur. No raw message, stack, account, or listening data. Turn off here anytime."
+                last
+                right={(
+                  <Switch
+                    value={diagnosticsEnabled}
+                    disabled={diagnosticsLoading}
+                    onValueChange={changeDiagnosticsConsent}
+                    accessibilityLabel="Share error diagnostics"
+                    trackColor={{ false: "#494451", true: NEU.orchid }}
+                    thumbColor={diagnosticsEnabled ? "#FFFFFF" : "#D2CBD9"}
+                  />
+                )}
+              />
             </Raised>
+
+            {!!diagnosticsError && (
+              <StatusCard>
+                <Text style={st.bad}>{diagnosticsError}</Text>
+              </StatusCard>
+            )}
 
             {status === "upToDate" && (
               <StatusCard>

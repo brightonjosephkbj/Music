@@ -13,6 +13,7 @@ const PLAY_FG = "#101010"; // play/pause icon
 const SEEK_AMOUNT = 10;
 const HIDE_AFTER = 4000;
 const DOUBLE_TAP = 280;
+const LONG_PRESS_MS = 450;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 function fmt(sec) {
@@ -26,6 +27,9 @@ function fmt(sec) {
 function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
+  const trackIdentity = track
+    ? `${track.provider || ""}:${track.id ?? track.localUri ?? track.stream_url ?? track.download_url ?? "unknown"}`
+    : null;
 
   const [visible, setVisible] = useState(true);
   const [scrubbing, setScrubbing] = useState(false);
@@ -33,19 +37,25 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
   const [muted, setMuted] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [speedOpen, setSpeedOpen] = useState(false);
+  const [repeatEnabled, setRepeatEnabled] = useState(() => !!engine?.videoPlayer?.loop);
+  const [fastForwarding, setFastForwarding] = useState(false);
   const [seekFb, setSeekFb] = useState(null);
 
   const opacity = useRef(new Animated.Value(1)).current;
   const hideTimer = useRef(null);
   const fbTimer = useRef(null);
   const tapTimer = useRef(null);
+  const longPressTimer = useRef(null);
+  const fastForwardActive = useRef(false);
+  const restoreRate = useRef(1);
   const lastTap = useRef(0);
   const trackW = useRef(0);
   const startX = useRef(0);
   const pctRef = useRef(0);
+  const previousTrackIdentity = useRef(trackIdentity);
 
   const L = useRef({});
-  L.current = { engine, visible, scrubbing, speedOpen, onClose, onNext, onPrev, width };
+  L.current = { engine, visible, scrubbing, speedOpen, fastForwarding, speed, onClose, onNext, onPrev, width };
 
   // ---------- orientation ----------
   useEffect(() => {
@@ -79,16 +89,35 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
     setVisible(true);
     Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
     hideTimer.current = setTimeout(() => {
-      if (!L.current.scrubbing && !L.current.speedOpen) hideControls();
+      if (!L.current.scrubbing && !L.current.speedOpen && !L.current.fastForwarding) hideControls();
     }, HIDE_AFTER);
   }, [opacity, hideControls]);
 
+  const stopFastForward = useCallback(() => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+    if (!fastForwardActive.current) return;
+    fastForwardActive.current = false;
+    setFastForwarding(false);
+    L.current.engine?.setRate(restoreRate.current);
+    showControls();
+  }, [showControls]);
+
   useEffect(() => {
+    lastTap.current = 0;
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    stopFastForward();
+    if (previousTrackIdentity.current !== trackIdentity) {
+      previousTrackIdentity.current = trackIdentity;
+      setRepeatEnabled(false);
+      if (engine?.videoPlayer) engine.videoPlayer.loop = false;
+    }
     showControls();
     return () => {
-      [hideTimer, fbTimer, tapTimer].forEach((t) => t.current && clearTimeout(t.current));
+      [hideTimer, fbTimer, tapTimer, longPressTimer].forEach((t) => t.current && clearTimeout(t.current));
     };
-  }, [track?.id]);
+  }, [trackIdentity]);
 
   // ---------- seek ----------
   const seekRelative = useCallback((amount) => {
@@ -126,7 +155,10 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
         setScrubbing(false);
         showControls();
       },
-      onPanResponderTerminate: () => setScrubbing(false),
+      onPanResponderTerminate: () => {
+        setScrubbing(false);
+        showControls();
+      },
     })
   ).current;
 
@@ -134,7 +166,30 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
   const videoPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        longPressTimer.current = setTimeout(() => {
+          const currentEngine = L.current.engine;
+          if (!currentEngine?.setRate) return;
+          restoreRate.current = currentEngine.videoPlayer?.playbackRate ?? L.current.speed ?? 1;
+          fastForwardActive.current = true;
+          setFastForwarding(true);
+          currentEngine.setRate(2);
+          showControls();
+        }, LONG_PRESS_MS);
+      },
+      onPanResponderMove: (_, g) => {
+        if (longPressTimer.current && (Math.abs(g.dx) > 12 || Math.abs(g.dy) > 12)) {
+          clearTimeout(longPressTimer.current);
+          longPressTimer.current = null;
+        }
+      },
       onPanResponderRelease: (e, g) => {
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
+        if (fastForwardActive.current) {
+          stopFastForward();
+          return;
+        }
         const adx = Math.abs(g.dx);
         const ady = Math.abs(g.dy);
         if (adx < 10 && ady < 10) {
@@ -158,6 +213,7 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
           else if (g.dx > 60) { L.current.onPrev && L.current.onPrev(); showControls(); }
         }
       },
+      onPanResponderTerminate: stopFastForward,
     })
   ).current;
 
@@ -177,16 +233,12 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
     showControls();
   };
 
-  // ---------- auto next ----------
-  const advanced = useRef(false);
-  useEffect(() => { advanced.current = false; }, [track?.id]);
-  useEffect(() => {
-    if (!engine?.duration || advanced.current) return;
-    if (engine.position > 1 && engine.position >= engine.duration - 0.5) {
-      advanced.current = true;
-      onNext && onNext();
-    }
-  }, [engine?.position, engine?.duration]);
+  const toggleRepeat = () => {
+    const next = !repeatEnabled;
+    setRepeatEnabled(next);
+    if (engine?.videoPlayer) engine.videoPlayer.loop = next;
+    showControls();
+  };
 
   // ---------- loading state ----------
   if (!engine?.videoPlayer || track?.pending) {
@@ -199,6 +251,26 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
         <ActivityIndicator size="large" color={ACCENT} />
         <Text style={st.loadTitle} numberOfLines={2}>{track?.title || "Loading video"}</Text>
         <Text style={st.loadSub}>Getting your video ready...</Text>
+        <TouchableOpacity onPress={onClose} style={st.loadBack}>
+          <Ionicons name="chevron-back" size={24} color="#fff" />
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (engine.videoError) {
+    return (
+      <View style={st.loadingRoot}>
+        <StatusBar hidden />
+        {!!track?.artwork && (
+          <Image source={{ uri: track.artwork }} style={[StyleSheet.absoluteFill, { opacity: 0.25 }]} blurRadius={20} />
+        )}
+        <Ionicons name="alert-circle-outline" size={42} color={ACCENT} />
+        <Text style={st.loadTitle} numberOfLines={2}>{track?.title || "Video unavailable"}</Text>
+        <Text style={st.loadSub}>{engine.videoError}</Text>
+        <TouchableOpacity onPress={engine.retryVideo} style={st.retryButton}>
+          <Text style={st.retryText}>Try again</Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={onClose} style={st.loadBack}>
           <Ionicons name="chevron-back" size={24} color="#fff" />
         </TouchableOpacity>
@@ -238,6 +310,12 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
         </View>
       )}
 
+      {fastForwarding && (
+        <View style={st.fastForwardBadge} pointerEvents="none">
+          <Text style={st.fastForwardText}>2× speed · release to resume</Text>
+        </View>
+      )}
+
       <Animated.View
         style={[StyleSheet.absoluteFill, { opacity }]}
         pointerEvents={visible ? "box-none" : "none"}
@@ -257,6 +335,13 @@ function PlayerInner({ track, engine, onClose, onNext, onPrev }) {
               style={[st.circleBtn, { width: 56, borderRadius: 22 }]}
             >
               <Text style={st.speedTxt}>{speed}x</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={toggleRepeat}
+              style={[st.circleBtn, repeatEnabled && { backgroundColor: ACCENT }]}
+              accessibilityLabel={repeatEnabled ? "Turn off repeat video" : "Repeat video"}
+            >
+              <Ionicons name={repeatEnabled ? "repeat" : "repeat-outline"} size={20} color="#fff" />
             </TouchableOpacity>
           </View>
 
@@ -334,6 +419,10 @@ const st = StyleSheet.create({
   loadingRoot: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center", paddingHorizontal: 32 },
   loadTitle: { color: "#fff", fontSize: 16, fontWeight: "700", marginTop: 20, textAlign: "center" },
   loadSub: { color: "rgba(255,255,255,0.6)", fontSize: 13, marginTop: 6 },
+  retryButton: { marginTop: 20, backgroundColor: ACCENT, borderRadius: 20, paddingHorizontal: 22, paddingVertical: 11 },
+  retryText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  fastForwardBadge: { position: "absolute", top: "44%", alignSelf: "center", backgroundColor: "rgba(0,0,0,0.65)", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 9 },
+  fastForwardText: { color: "#fff", fontSize: 14, fontWeight: "700" },
   loadBack: {
     position: "absolute", top: 40, left: 18, width: 44, height: 44, borderRadius: 22,
     backgroundColor: GLASS, borderWidth: 1, borderColor: BORDER, alignItems: "center", justifyContent: "center",

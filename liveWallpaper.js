@@ -22,14 +22,22 @@ export async function prepareWallpaperVideo(sourceUri) {
   return dest;
 }
 
+const WALLPAPER_ACTIONS = [
+  "android.service.wallpaper.LIVE_WALLPAPER_CHOOSER",
+  "android.intent.action.SET_WALLPAPER",
+];
+
 // Opens Android's live wallpaper list; the user picks "Obsidian" and taps Apply.
 export async function openLiveWallpaperPicker() {
   if (Platform.OS !== "android") return false;
-  try {
-    await Linking.sendIntent("android.service.wallpaper.LIVE_WALLPAPER_CHOOSER");
-    return true;
-  } catch (e) {
-    try { await Linking.openSettings(); } catch (e2) {}
-    return false;
+  const errors = [];
+  for (const action of WALLPAPER_ACTIONS) {
+    try {
+      await Linking.sendIntent(action);
+      return true;
+    } catch (e) {
+      errors.push(action.split(".").pop() + ": " + String((e && e.message) || e));
+    }
   }
+  throw new Error(errors.join(" | "));
 }

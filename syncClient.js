@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import { API_BASE, authedHeaders, gatewayFetch } from "./apiClient";
+import { getStoredAuth } from "./authStorage";
 import { saveDownloadToSharedStorage } from "./mediaLibrarySave";
 import { buildLibraryFilename } from "./libraryFileNaming";
 
@@ -8,8 +9,7 @@ const HAVE_KEY = "b24_sync_have";
 let running = false;
 
 async function getUserId() {
-  const raw = await AsyncStorage.getItem("b24_auth");
-  const u = raw ? JSON.parse(raw) : null;
+  const u = await getStoredAuth();
   return u?.user_id || u?.id || null;
 }
 
