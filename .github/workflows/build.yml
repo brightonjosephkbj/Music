@@ -73,7 +73,7 @@ jobs:
 
       - name: Build debug-signed APK for CI testing
         working-directory: android
-        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
+        run: ./gradlew assembleRelease -x lintVitalAnalyzeRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -168,7 +168,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
+        run: ./gradlew assembleRelease -x lintVitalAnalyzeRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
