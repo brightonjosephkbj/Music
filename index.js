@@ -1,8 +1,8 @@
 import { registerRootComponent } from 'expo';
-import { withErrorReporting } from './errorReporter';
+import { withErrorReporting } from './services/errorReporter';
 import { registerWidgetTaskHandler } from 'react-native-android-widget';
-import App from './Root';
-import { widgetTaskHandler } from './widget-task-handler';
+import App from './app/Root';
+import { widgetTaskHandler } from './widget/widget-task-handler';
 
 registerRootComponent(withErrorReporting(App));
 registerWidgetTaskHandler(widgetTaskHandler);

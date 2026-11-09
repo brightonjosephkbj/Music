@@ -1,55 +1,55 @@
-import "./gatewayFallback";
+import "./services/gatewayFallback";
 import "react-native-gesture-handler"; // must be the very first import, before anything else
 
 import React, { useState, useEffect, useRef } from "react";
 import { StatusBar } from "expo-status-bar";
 import { View, ActivityIndicator } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import AppShell from "./AppShell";
+import AppShell from "./app/AppShell";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import HomeScreen from "./HomeScreen";
-import LibraryScreen from "./LibraryScreen";
-import useOtaCheck from "./useOtaCheck";
-import NewsScreen from "./NewsScreen";
-import RestScreen from "./RestScreen";
-import usePlaybackEngine from "./usePlaybackEngine";
-import PlayerCard from "./PlayerCard";
-import PasteUrlScreen from "./PasteUrlScreen";
-import SearchScreen from "./SearchScreen";
-import ArtScreen from "./ArtScreen";
-import WeatherScreen from "./WeatherScreen";
-import TriviaScreen from "./TriviaScreen";
-import JokesScreen from "./JokesScreen";
-import FoodScreen from "./FoodScreen";
-import RecentScreen from "./RecentScreen";
-import MostPlayedScreen from "./MostPlayedScreen";
-import AIChatScreen from "./AIChatScreen";
-import InboxScreen from "./InboxScreen"; /* app_inbox_wiring_patch */
-import ShareThreadScreen from "./ShareThreadScreen";
-import FullscreenVideoPlayer from "./FullscreenVideoPlayer";
-import SettingsScreen from "./SettingsScreen";
-import UpdatePrompt from "./UpdatePrompt";
-import { checkForUpdate } from "./otaClient";
-import { DownloadsProvider } from "./DownloadsContext";
+import HomeScreen from "./screens/HomeScreen";
+import LibraryScreen from "./screens/library/LibraryScreen";
+import useOtaCheck from "./hooks/useOtaCheck";
+import NewsScreen from "./screens/NewsScreen";
+import RestScreen from "./screens/RestScreen";
+import usePlaybackEngine from "./hooks/usePlaybackEngine";
+import PlayerCard from "./components/PlayerCard";
+import PasteUrlScreen from "./screens/PasteUrlScreen";
+import SearchScreen from "./screens/SearchScreen";
+import ArtScreen from "./screens/ArtScreen";
+import WeatherScreen from "./screens/WeatherScreen";
+import TriviaScreen from "./screens/TriviaScreen";
+import JokesScreen from "./screens/JokesScreen";
+import FoodScreen from "./screens/FoodScreen";
+import RecentScreen from "./screens/RecentScreen";
+import MostPlayedScreen from "./screens/MostPlayedScreen";
+import AIChatScreen from "./screens/AIChatScreen";
+import InboxScreen from "./screens/InboxScreen"; /* app_inbox_wiring_patch */
+import ShareThreadScreen from "./screens/ShareThreadScreen";
+import FullscreenVideoPlayer from "./components/FullscreenVideoPlayer";
+import SettingsScreen from "./screens/SettingsScreen";
+import UpdatePrompt from "./components/UpdatePrompt";
+import { checkForUpdate } from "./services/otaClient";
+import { DownloadsProvider } from "./context/DownloadsContext";
 import MusicInfo from "expo-music-info-2";
-import { getCachedArtwork, setCachedArtwork } from "./deviceArtworkCache";
+import { getCachedArtwork, setCachedArtwork } from "./data/deviceArtworkCache";
 import {
   registerForPushNotificationsAsync,
   addDownloadNotificationResponseListener,
   getLastDownloadNotificationKeyAsync,
   addShareNotificationResponseListener,
   getLastShareFromUserIdAsync,
-} from "./notifications";
-import { registerPushToken } from "./apiClient";
-import { listFriends } from "./shareClient";
-import LoginScreen, { getStoredAuth, clearStoredAuth, updateStoredAuth } from "./LoginScreen";
-import { generateAIPlaylist } from "./aiPlaylist";
-import { tokenExpired } from "./authExpiry";
-import { setReportScreen } from "./errorReporter";
-import useAppResume from "./useAppResume";
-import { registerPlaybackControls, initMediaControls } from "./playbackBridge";
-import { updateNowPlayingWidget } from "./nowPlayingWidget";
-import { fetchLyrics, activeLyricIndex } from "./lyricsClient";
+} from "./services/notifications";
+import { registerPushToken } from "./services/apiClient";
+import { listFriends } from "./services/shareClient";
+import LoginScreen, { getStoredAuth, clearStoredAuth, updateStoredAuth } from "./screens/LoginScreen";
+import { generateAIPlaylist } from "./services/aiPlaylist";
+import { tokenExpired } from "./services/authExpiry";
+import { setReportScreen } from "./services/errorReporter";
+import useAppResume from "./hooks/useAppResume";
+import { registerPlaybackControls, initMediaControls } from "./services/playbackBridge";
+import { updateNowPlayingWidget } from "./widget/nowPlayingWidget";
+import { fetchLyrics, activeLyricIndex } from "./services/lyricsClient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Position updates re-render App several times a second. These keep the heavy
