@@ -1,5 +1,6 @@
 import { friendlyError } from "../utils/friendlyError";
 import React, { useState, useEffect, useRef } from "react";
+import { Animated as RNAnimated } from "react-native";
 import {
   View,
   Text,
@@ -101,6 +102,43 @@ const MOODS = [
   { label: "Throwbacks", q: "throwback hits", icon: "sparkles", fg: "#C89BFF", bg: "rgba(160,100,255,0.18)", border: "rgba(190,140,255,0.35)" },
   { label: "Party", q: "party mix", icon: "musical-notes", fg: "#8CE0A0", bg: "rgba(80,220,130,0.16)", border: "rgba(120,230,160,0.35)" },
 ];
+
+// One-tap download uses this option (medium MP3 = smaller, faster on mobile data)
+const QUICK_DL = { key: "audio_medium", mode: "audio", quality: "medium", ext: "mp3", label: "Audio - Medium Quality (MP3)" };
+
+const dlStyles = StyleSheet.create({
+  btn: { width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, alignItems: "center", justifyContent: "center", marginLeft: 10 },
+  btnBusy: { backgroundColor: "transparent", borderWidth: 2, borderColor: ACCENT },
+  btnDone: { backgroundColor: "#2E9E5B" },
+  btnPct: { color: TEXT_PRIMARY, fontSize: 11, fontWeight: "800" },
+  topLabel: { color: ORCHID, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 },
+  card: { backgroundColor: GLASS_BG, borderWidth: 1, borderColor: GLASS_BORDER, borderRadius: 16, padding: 12, marginBottom: 10, marginHorizontal: 4 },
+  cardTop: { flexDirection: "row", justifyContent: "space-between" },
+  cardTitle: { color: TEXT_PRIMARY, fontSize: 13, fontWeight: "700" },
+  cardPct: { color: TEXT_PRIMARY, fontSize: 13, fontWeight: "700" },
+  bar: { height: 5, backgroundColor: "rgba(255,255,255,0.12)", borderRadius: 3, marginVertical: 9, overflow: "hidden" },
+  barFill: { height: "100%", backgroundColor: ACCENT, borderRadius: 3 },
+  cardSub: { color: TEXT_SECONDARY, fontSize: 11.5 },
+});
+
+// The card that slides out under a row while it downloads
+function DlCard({ progress, preparing }) {
+  const a = useRef(new RNAnimated.Value(0)).current;
+  useEffect(() => {
+    RNAnimated.timing(a, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+  }, [a]);
+  const pct = Math.round(progress * 100);
+  return (
+    <RNAnimated.View style={[dlStyles.card, { opacity: a, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }] }]}>
+      <View style={dlStyles.cardTop}>
+        <Text style={dlStyles.cardTitle}>{preparing ? "Preparing…" : "Downloading"}</Text>
+        <Text style={dlStyles.cardPct}>{preparing ? "" : pct + "%"}</Text>
+      </View>
+      <View style={dlStyles.bar}><View style={[dlStyles.barFill, { width: pct + "%" }]} /></View>
+      <Text style={dlStyles.cardSub}>MP3 · saves to your library</Text>
+    </RNAnimated.View>
+  );
+}
 
 const chipStyles = StyleSheet.create({
   row: { marginTop: 4, marginBottom: 8 },
@@ -386,8 +424,8 @@ export default function SearchScreen({ onTrackPress }) {
     }
   };
 
-  const handleSheetPlay = async (option) => {
-    const ytItem = sheetItem;
+  const handleSheetPlay = async (option, itemOverride) => {
+    const ytItem = itemOverride || sheetItem;
     closeQualitySheet();
     if (!ytItem) return;
     const streamInfo = await resolveAtQuality(ytItem, option);
@@ -408,8 +446,8 @@ export default function SearchScreen({ onTrackPress }) {
     onTrackPress && onTrackPress(track);
   };
 
-  const handleSheetDownload = async (option) => {
-    const ytItem = sheetItem;
+  const handleSheetDownload = async (option, itemOverride) => {
+    const ytItem = itemOverride || sheetItem;
     closeQualitySheet();
     if (!ytItem) return;
     const key = `youtube-${ytItem.id}-${option.key}`;
@@ -548,65 +586,87 @@ export default function SearchScreen({ onTrackPress }) {
     setSelectedIds(new Set());
   };
 
-  const renderYoutubeRow = (ytItem) => {
+  const renderYoutubeRow = (ytItem, isTop) => {
     const isSelected = selectedIds.has(ytItem.id);
-    // downloadingKey has shape `youtube-<id>-<optionKey>` - match on the
-    // item id prefix so the row shows progress no matter which quality
-    // option was picked in the sheet.
-    const isDownloading = !!downloadingKey && downloadingKey.startsWith(`youtube-${ytItem.id}-`);
-    const downloadedKey = [...downloadedIds].find((k) => k.startsWith(`youtube-${ytItem.id}-`));
-    const isDownloaded = !!downloadedKey;
+    const selecting = selectedIds.size > 0;
+    const prefix = `youtube-${ytItem.id}-`;
+    const isDownloading = !!downloadingKey && downloadingKey.startsWith(prefix);
+    const isDownloaded = [...downloadedIds].some((k) => k.startsWith(prefix));
+    const isResolving = resolvingIds.has(`${ytItem.id}-${QUICK_DL.key}`);
+    const kind = classifyVideo(ytItem);
+    const playDownloaded = () =>
+      onTrackPress &&
+      onTrackPress({
+        provider: "youtube",
+        id: ytItem.id,
+        type: "audio",
+        title: ytItem.title,
+        artist: ytItem.uploader,
+        artwork: ytItem.thumbnail,
+        duration: ytItem.duration,
+      });
 
     return (
-      <View key={`youtube-${ytItem.id}`} style={styles.glassCard}>
-        <TouchableOpacity
-          onPress={() => toggleSelected(ytItem.id)}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={[styles.checkbox, isSelected && styles.checkboxChecked]}
-        >
-          {isSelected && <Text style={styles.checkboxMark}>✓</Text>}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.rowBody}
-          onPress={() => openQualitySheet(ytItem)}
-        >
-          <Image source={ytItem.thumbnail ? { uri: ytItem.thumbnail } : undefined} style={styles.rowArt} />
-          <View style={styles.rowTextWrap}>
-            <Text numberOfLines={1} style={styles.rowTitle}>{ytItem.title}</Text>
-            <View style={styles.rowMetaRow}>
-              <Text numberOfLines={1} style={styles.rowArtist}>{ytItem.uploader}</Text>
-              <Text style={styles.providerBadge}>YOUTUBE</Text>
-                {classifyVideo(ytItem) === "movie" && <Text style={styles.providerBadge}>MOVIE</Text>}
-                {classifyVideo(ytItem) === "mix" && <Text style={styles.providerBadge}>MIX</Text>}
-            </View>
-          </View>
-          <Text style={styles.rowDuration}>{formatDuration(ytItem.duration)}</Text>
-        </TouchableOpacity>
-
-        {isDownloading ? (
-          <View style={styles.downloadWrap}>
-            <Text style={styles.downloadPct}>{Math.round(downloadProgress * 100)}%</Text>
-          </View>
-        ) : isDownloaded ? (
+      <View key={`youtube-${ytItem.id}`}>
+        {isTop && <Text style={dlStyles.topLabel}>Top result</Text>}
+        <View style={styles.glassCard}>
+          {selecting && (
+            <TouchableOpacity
+              onPress={() => toggleSelected(ytItem.id)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={[styles.checkbox, isSelected && styles.checkboxChecked]}
+            >
+              {isSelected && <Text style={styles.checkboxMark}>✓</Text>}
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
-            onPress={() =>
-              onTrackPress &&
-              onTrackPress({
-                provider: "youtube",
-                id: ytItem.id,
-                type: "audio",
-                title: ytItem.title,
-                artist: ytItem.uploader,
-                artwork: ytItem.thumbnail,
-                duration: ytItem.duration,
-              })
-            }
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={styles.downloadTouch}
+            style={styles.rowBody}
+            onPress={() => (selecting ? toggleSelected(ytItem.id) : openQualitySheet(ytItem))}
+            onLongPress={() => toggleSelected(ytItem.id)}
+            delayLongPress={300}
           >
-            <Text style={styles.downloadGlyph}>Play</Text>
+            <Image
+              source={ytItem.thumbnail ? { uri: ytItem.thumbnail } : undefined}
+              style={[styles.rowArt, isTop && { width: 72, height: 72, borderRadius: 14 }]}
+            />
+            <View style={styles.rowTextWrap}>
+              <Text numberOfLines={2} style={[styles.rowTitle, isTop && { fontSize: 16 }]}>{ytItem.title}</Text>
+              <View style={styles.rowMetaRow}>
+                <Text numberOfLines={1} style={[styles.rowArtist, { flexShrink: 1 }]}>
+                  {ytItem.uploader} · {formatDuration(ytItem.duration)}
+                </Text>
+                {kind === "movie" && <Text style={styles.providerBadge}>MOVIE</Text>}
+                {kind === "mix" && <Text style={styles.providerBadge}>MIX</Text>}
+              </View>
+            </View>
           </TouchableOpacity>
-        ) : null}
+
+          {isDownloading || isResolving ? (
+            <View style={[dlStyles.btn, dlStyles.btnBusy]}>
+              {isDownloading ? (
+                <Text style={dlStyles.btnPct}>{Math.round(downloadProgress * 100)}</Text>
+              ) : (
+                <ActivityIndicator color={ACCENT} size="small" />
+              )}
+            </View>
+          ) : isDownloaded ? (
+            <TouchableOpacity onPress={playDownloaded} style={[dlStyles.btn, dlStyles.btnDone]}>
+              <Ionicons name="checkmark" size={20} color="#fff" />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              onPress={() => handleSheetDownload(QUICK_DL, ytItem)}
+              disabled={!!downloadingKey}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={[dlStyles.btn, !!downloadingKey && { opacity: 0.4 }]}
+            >
+              <Ionicons name="arrow-down" size={20} color={ACCENT_ON} />
+            </TouchableOpacity>
+          )}
+        </View>
+        {(isResolving || isDownloading) && (
+          <DlCard progress={isDownloading ? downloadProgress : 0} preparing={!isDownloading} />
+        )}
       </View>
     );
   };
@@ -803,7 +863,14 @@ export default function SearchScreen({ onTrackPress }) {
                     ))}
                   </ScrollView>
                   {shown.length === 0 && <Text style={chipStyles.empty}>Nothing here. Try another filter above.</Text>}
-                  {shown.map(renderYoutubeRow)}
+                  {ytFilter === "songs" && selectedIds.size === 0 && shown.length > 0 ? (
+                    <>
+                      {renderYoutubeRow(shown[0], true)}
+                      {shown.slice(1).map((yt) => renderYoutubeRow(yt))}
+                    </>
+                  ) : (
+                    shown.map((yt) => renderYoutubeRow(yt))
+                  )}
                 </>
               );
             })()}
