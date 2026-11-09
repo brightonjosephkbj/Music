@@ -24,7 +24,8 @@ import { getCurrentUser, listFriends, sendShare } from "./shareClient";
 import { addDownload, isDownloaded } from "./libraryStorage";
 import { buildLibraryFilename, B24_ALBUM_NAME } from "./libraryFileNaming";
 import { gatewayHeaders } from "./apiClient";
-import { fetchLyrics, activeLyricIndex } from "./lyricsClient";
+import { fetchLyrics, activeLyricIndex, saveLyrics } from "./lyricsClient";
+import LyricsFallback from "./LyricsFallback";
 import ConfigureAudioScreen from "./ConfigureAudioScreen";
 import { trackKey } from "./audioSettings";
 
@@ -111,6 +112,33 @@ export default function PlayerCard({
   const [lyrics, setLyrics] = useState([]);
   const [lyricsLoading, setLyricsLoading] = useState(true);
   const [hasSynced, setHasSynced] = useState(false);
+  const [lyricsRetry, setLyricsRetry] = useState(false);
+  const retryLyrics = async (artist, title) => {
+    if (!artist || !title) {
+      Alert.alert("Missing info", "Fill in both title and artist.");
+      return;
+    }
+    setLyricsRetry(true);
+    try {
+      const d = await fetchLyrics({ ...track, artist, title });
+      if (d && Array.isArray(d.lyrics) && d.lyrics.length > 0) {
+        setLyrics(d.lyrics);
+        setHasSynced(!!d.hasSynced);
+        saveLyrics(track, d);
+      } else {
+        Alert.alert("Still not found", "Try a different spelling, or import a file.");
+      }
+    } catch (e) {
+      Alert.alert("Search failed", "Check your connection and try again.");
+    } finally {
+      setLyricsRetry(false);
+    }
+  };
+  const importLyrics = (parsed) => {
+    setLyrics(parsed.lyrics);
+    setHasSynced(!!parsed.hasSynced);
+    saveLyrics(track, parsed);
+  };
   const [lyricDisplayMode, setLyricDisplayMode] = useState("line");
 
   const [related, setRelated] = useState([]);
@@ -888,7 +916,14 @@ export default function PlayerCard({
             {lyricsLoading ? (
               <ActivityIndicator color={C.ink} style={{ marginTop: 30 }} />
             ) : lyrics.length === 0 ? (
-              <Text style={styles.emptyText}>No lyrics found for this track.</Text>
+              <LyricsFallback
+                colors={C}
+                artist={track?.artist}
+                title={track?.title}
+                loading={lyricsRetry}
+                onSearch={retryLyrics}
+                onImport={importLyrics}
+              />
             ) : (
               <ScrollView
                 ref={lyricsScrollRef}

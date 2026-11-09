@@ -1,0 +1,187 @@
+name: Obsidian Android validation and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Build, sign, and publish a public Obsidian APK release
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Android JavaScript bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Validate Expo configuration
+        run: npx expo config --type public
+
+      - name: Bundle Android JavaScript
+        run: npx expo export --platform android --no-bytecode --no-minify --output-dir /tmp/obsidian-ci-export
+
+  build_apk:
+    name: Build installable CI APK artifact
+    if: github.event_name == 'push'
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --clean
+
+      - name: Set CI versionCode
+        run: sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
+
+      - name: Build debug-signed APK for CI testing
+        working-directory: android
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsidian-ci-apk-${{ github.run_number }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
+
+  release:
+    name: Build and publish approved APK
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment: production-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Expo prebuild
+        run: npx expo prebuild --platform android --clean
+
+      - name: Block releases while signing material is tracked in source
+        run: |
+          if git ls-files | grep -Eq '(^|/)(release\.keystore|keystore_base64\.txt)$'; then
+            echo "::error::Signing material is tracked in source; remove it and rotate the signing identity before releasing."
+            exit 1
+          fi
+
+      - name: Set versionCode from run number
+        run: |
+          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          grep -n "versionCode" android/app/build.gradle
+
+      - name: Configure Gradle memory
+        run: |
+          cat >> android/gradle.properties << 'PROPSEOF'
+          org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          org.gradle.parallel=false
+          kotlin.daemon.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m
+          PROPSEOF
+
+      - name: Decode keystore and configure signing
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/release.keystore
+          python3 << 'GRADLEEOF'
+          with open("app/build.gradle") as f:
+              content = f.read()
+          signing_block = '''    signingConfigs {
+              release {
+                  storeFile file('release.keystore')
+                  storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                  keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                  keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+              }
+          }
+          '''
+          content = content.replace("android {\n", "android {\n" + signing_block, 1)
+          content = content.replace(
+              "signingConfig signingConfigs.debug",
+              "signingConfig signingConfigs.release"
+          )
+          with open("app/build.gradle", "w") as f:
+              f.write(content)
+          GRADLEEOF
+
+      - name: Build release APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsidian-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk "Obsidian-v${{ github.run_number }}.apk"
+          gh release create "v${{ github.run_number }}" "Obsidian-v${{ github.run_number }}.apk" \
+            --repo "${{ github.repository }}" \
+            --title "Obsidian build ${{ github.run_number }}" \
+            --generate-notes --latest

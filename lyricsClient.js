@@ -66,3 +66,15 @@ export function activeLyricIndex(lyrics, position) {
   }
   return idx;
 }
+
+// Save lyrics under the track's ORIGINAL artist/title so they load offline
+// next time, even if they were found via an edited search or a file import.
+export async function saveLyrics(track, data) {
+  if (!track?.artist || !track?.title) return;
+  if (!data || !Array.isArray(data.lyrics) || data.lyrics.length === 0) return;
+  await setCachedLyrics(track.artist, track.title, {
+    found: true,
+    hasSynced: !!data.hasSynced,
+    lyrics: data.lyrics,
+  });
+}
