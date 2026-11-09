@@ -102,6 +102,19 @@ const MOODS = [
   { label: "Party", q: "party mix", icon: "musical-notes", fg: "#8CE0A0", bg: "rgba(80,220,130,0.16)", border: "rgba(120,230,160,0.35)" },
 ];
 
+const chipStyles = StyleSheet.create({
+  row: { marginTop: 4, marginBottom: 8 },
+  rowContent: { paddingRight: 8 },
+  chip: {
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, marginRight: 8,
+    backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
+  },
+  chipOn: { backgroundColor: ORCHID, borderColor: ORCHID },
+  chipText: { color: "rgba(255,255,255,0.65)", fontSize: 13, fontWeight: "700" },
+  chipTextOn: { color: "#fff" },
+  empty: { color: "rgba(255,255,255,0.5)", fontSize: 13, paddingVertical: 14, textAlign: "center" },
+});
+
 export default function SearchScreen({ onTrackPress }) {
   const { startDownload, updateProgress, finishDownload, registerControls, isCancelled } = useDownloads();
   const [query, setQuery] = useState("");
@@ -117,6 +130,7 @@ export default function SearchScreen({ onTrackPress }) {
   const [downloadedIds, setDownloadedIds] = useState(() => new Set());
 
   const [ytResults, setYtResults] = useState([]);
+  const [ytFilter, setYtFilter] = useState("songs");
   const searchRequestId = useRef(0);
   const searchAbortController = useRef(null);
   const [resolvingIds, setResolvingIds] = useState(() => new Set());
@@ -768,7 +782,31 @@ export default function SearchScreen({ onTrackPress }) {
               </View>
             )}
 
-            {ytResults.map(renderYoutubeRow)}
+            {(() => {
+              // Sort results into groups using your existing classifyVideo()
+              const groups = { songs: [], mixes: [], movies: [] };
+              ytResults.forEach((yt) => {
+                const k = classifyVideo(yt);
+                (k === "movie" ? groups.movies : k === "mix" ? groups.mixes : groups.songs).push(yt);
+              });
+              const shown = ytFilter === "all" ? ytResults : groups[ytFilter];
+              const chips = [["songs", "Songs"], ["mixes", "Mixes"], ["movies", "Movies"], ["all", "All"]];
+              return (
+                <>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={chipStyles.row} contentContainerStyle={chipStyles.rowContent}>
+                    {chips.map(([key, label]) => (
+                      <TouchableOpacity key={key} onPress={() => setYtFilter(key)} style={[chipStyles.chip, ytFilter === key && chipStyles.chipOn]}>
+                        <Text style={[chipStyles.chipText, ytFilter === key && chipStyles.chipTextOn]}>
+                          {label}{key !== "all" ? " " + groups[key].length : ""}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  {shown.length === 0 && <Text style={chipStyles.empty}>Nothing here. Try another filter above.</Text>}
+                  {shown.map(renderYoutubeRow)}
+                </>
+              );
+            })()}
           </View>
         )}
 
