@@ -41,6 +41,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Sharing from "expo-sharing";
+import { songShareMessage, playlistShareMessage } from "../../utils/shareText";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   getDownloads,
@@ -394,7 +395,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
     return [
       {
         key: "share",
-        label: "Share",
+        label: "Share file",
         onPress: async () => {
           if (menuItem.localUri && (await Sharing.isAvailableAsync())) {
             // Actually shares the audio/video file itself via a content:// URI -
@@ -402,9 +403,14 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
             // file on Android and only ever sent the title text.
             await Sharing.shareAsync(menuItem.localUri);
           } else {
-            Share.share({ message: menuItem.title });
+            Share.share({ message: songShareMessage(menuItem.title, menuItem.artist) });
           }
         },
+      },
+      {
+        key: "shareLink",
+        label: "Share with app link",
+        onPress: () => Share.share({ message: songShareMessage(menuItem.title, menuItem.artist) }),
       },
       {
         key: "playNext",
@@ -1503,7 +1509,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
             <>
               <TouchableOpacity
                 style={styles.iconButtonRound}
-                onPress={() => Share.share({ message: `Check out my playlist: ${selectedPlaylist.name}` })}
+                onPress={() => Share.share({ message: playlistShareMessage(selectedPlaylist.name) })}
               >
                 <Ionicons name="share-outline" size={16} color="#fff" />
               </TouchableOpacity>
@@ -1537,7 +1543,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
             <>
               <TouchableOpacity
                 style={styles.iconButtonRound}
-                onPress={() => Share.share({ message: `Check out my group playlist: ${selectedGroupPlaylist.name}` })}
+                onPress={() => Share.share({ message: playlistShareMessage(selectedGroupPlaylist.name, "group playlist") })}
               >
                 <Ionicons name="share-outline" size={16} color="#fff" />
               </TouchableOpacity>
