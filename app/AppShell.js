@@ -104,12 +104,13 @@ export default function AppShell({
   useEffect(() => {
     if (previousScreenKey.current === screenKey) return;
     previousScreenKey.current = screenKey;
-    screenOpacity.setValue(0);
-    screenTranslateX.setValue(swipeDir.current ? swipeDir.current * 40 : 14);
+    screenOpacity.setValue(swipeDir.current ? 0.35 : 0);
+    const fast = swipeDir.current !== 0;
+    screenTranslateX.setValue(fast ? swipeDir.current * 40 : 14);
     swipeDir.current = 0;
     const transition = Animated.parallel([
-      Animated.timing(screenOpacity, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(screenTranslateX, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(screenOpacity, { toValue: 1, duration: fast ? 130 : 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(screenTranslateX, { toValue: 0, duration: fast ? 170 : 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]);
     transition.start();
     return () => transition.stop();
@@ -118,11 +119,13 @@ export default function AppShell({
   // Swipe to change tabs, following the bottom-nav order
   const swipeGesture = Gesture.Pan()
     .runOnJS(true)
-    .activeOffsetX([-30, 30]) // must move sideways first...
+    .activeOffsetX([-15, 15]) // must move sideways first...
     .failOffsetY([-20, 20])   // ...otherwise it is a vertical scroll and we back off
     .onEnd((e) => {
       if (!SWIPE_NAV_ENABLED) return;
-      if (Math.abs(e.translationX) < 90 || Math.abs(e.velocityX) < 600) return;
+      const fastFlick = Math.abs(e.translationX) >= 50 && Math.abs(e.velocityX) >= 250;
+      const longDrag = Math.abs(e.translationX) >= 140;
+      if (!fastFlick && !longDrag) return;
       const i = NAV_ITEMS.findIndex((it) => it.key === activeNav);
       if (i < 0) return; // not on a main tab (e.g. a drawer screen)
       const next = e.translationX < 0 ? i + 1 : i - 1;
