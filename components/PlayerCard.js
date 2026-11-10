@@ -595,6 +595,7 @@ export default function PlayerCard({
           artwork_url: track.artwork,
           provider: track.provider,
           duration: track.duration || 0,
+          source_url: track.source_url || null,
         },
       });
       setShareSheetVisible(false);

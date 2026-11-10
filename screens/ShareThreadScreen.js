@@ -175,14 +175,14 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
     const downloads = await getDownloads();
     return downloads
       .filter((d) => d.type === "audio")
-      .map((d) => ({ id: d.id, title: d.title, artist: d.artist, artwork_url: d.artwork }));
+      .map((d) => ({ id: d.id, title: d.title, artist: d.artist, artwork_url: d.artwork, source_url: d.source_url || null, duration: d.duration || 0 }));
   }, []);
 
   const fetchVideos = useCallback(async () => {
     const downloads = await getDownloads();
     return downloads
       .filter((d) => d.type === "video")
-      .map((d) => ({ id: d.id, title: d.title, artist: d.artist, artwork_url: d.artwork }));
+      .map((d) => ({ id: d.id, title: d.title, artist: d.artist, artwork_url: d.artwork, source_url: d.source_url || null, duration: d.duration || 0 }));
   }, []);
 
   const handleSendShare = useCallback(
@@ -194,7 +194,7 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
         {
           item_type: item.__kind === "video" ? "video" : "track",
           item_id: item.id,
-          item_meta: { title: item.title, artist: item.artist, artwork_url: item.artwork_url },
+          item_meta: { title: item.title, artist: item.artist, artwork_url: item.artwork_url, source_url: item.source_url || null, duration: item.duration || 0 },
         },
         message
       );
