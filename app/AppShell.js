@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Image, Platform } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -55,6 +56,9 @@ function SpringTouchable({ children, style, ...props }) {
   );
 }
 
+// Swipe left/right to change tabs. Set to false to turn it off.
+const SWIPE_NAV_ENABLED = true;
+
 export default function AppShell({
   children,
   activeNav,
@@ -95,12 +99,14 @@ export default function AppShell({
   const screenOpacity = useRef(new Animated.Value(1)).current;
   const screenTranslateX = useRef(new Animated.Value(0)).current;
   const previousScreenKey = useRef(screenKey);
+  const swipeDir = useRef(0);
 
   useEffect(() => {
     if (previousScreenKey.current === screenKey) return;
     previousScreenKey.current = screenKey;
     screenOpacity.setValue(0);
-    screenTranslateX.setValue(14);
+    screenTranslateX.setValue(swipeDir.current ? swipeDir.current * 40 : 14);
+    swipeDir.current = 0;
     const transition = Animated.parallel([
       Animated.timing(screenOpacity, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(screenTranslateX, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
@@ -108,6 +114,22 @@ export default function AppShell({
     transition.start();
     return () => transition.stop();
   }, [screenKey, screenOpacity, screenTranslateX]);
+
+  // Swipe to change tabs, following the bottom-nav order
+  const swipeGesture = Gesture.Pan()
+    .runOnJS(true)
+    .activeOffsetX([-30, 30]) // must move sideways first...
+    .failOffsetY([-20, 20])   // ...otherwise it is a vertical scroll and we back off
+    .onEnd((e) => {
+      if (!SWIPE_NAV_ENABLED) return;
+      if (Math.abs(e.translationX) < 90 || Math.abs(e.velocityX) < 600) return;
+      const i = NAV_ITEMS.findIndex((it) => it.key === activeNav);
+      if (i < 0) return; // not on a main tab (e.g. a drawer screen)
+      const next = e.translationX < 0 ? i + 1 : i - 1;
+      if (next < 0 || next >= NAV_ITEMS.length) return; // stop at the ends
+      swipeDir.current = e.translationX < 0 ? 1 : -1;
+      onNavPress && onNavPress(NAV_ITEMS[next].key);
+    });
 
   // Flickering dot while any download is active
   const dotOpacity = useRef(new Animated.Value(1)).current;
@@ -222,6 +244,7 @@ export default function AppShell({
 
   return (
     <View style={styles.root}>
+      <GestureDetector gesture={swipeGesture}>
       <Animated.View
         style={[
           styles.screenArea,
@@ -231,6 +254,7 @@ export default function AppShell({
       >
         {children}
       </Animated.View>
+      </GestureDetector>
 
       <LinearGradient
         pointerEvents="none"
