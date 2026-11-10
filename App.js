@@ -180,6 +180,12 @@ export default function App() {
   // every time the app opens. Any failure (no history yet, offline,
   // backend error) is swallowed - this should never block or nag.
   useEffect(() => {
+    // Automatic "Made for you" generation is OFF.
+    // Playlists are now only generated when the user taps the Generate button.
+    // To bring the 3-day timer back, change this to true.
+    const AUTO_GENERATE = false;
+    if (!AUTO_GENERATE) return;
+
     const AI_PLAYLIST_GEN_KEY = "b24music:aiPlaylistLastGen";
     const FIRST_SEEN_KEY = "b24music:firstSeenAt";
     const DELAY_MS = 3 * 24 * 60 * 60 * 1000; // wait 3 days before the first auto-gen
