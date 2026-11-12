@@ -40,7 +40,7 @@ jobs:
         run: npx expo export --platform android --no-bytecode --no-minify --output-dir /tmp/obsidian-ci-export
 
   build_apk:
-    name: Build installable CI APK artifact
+    name: Build debug test APK (not for distribution)
     if: github.event_name == 'push'
     needs: validate
     runs-on: ubuntu-latest
@@ -62,34 +62,36 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install locked dependencies
+      - name: Install dependencies
         run: npm ci
 
       - name: Generate Android project
         run: npx expo prebuild --platform android --clean
 
       - name: Set CI versionCode
-        run: sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
+        run: |
+          sed -i -E "s/(versionCode )[0-9]+/\1${{ github.run_number }}/" android/app/build.gradle
 
-      - name: Build debug-signed APK for CI testing
+      - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleRelease -x lintVitalAnalyzeRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
+        run: ./gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a --stacktrace
 
-      - name: Upload APK artifact
+      - name: Upload debug test APK
         uses: actions/upload-artifact@v4
         with:
-          name: obsidian-ci-apk-${{ github.run_number }}
-          path: android/app/build/outputs/apk/release/app-release.apk
+          name: obsidian-debug-test-${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
   release:
-    name: Build and publish approved APK
+    name: Build and publish signed Obsidian APK
     if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
     needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: write
     environment: production-release
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -108,80 +110,178 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install locked dependencies
+      - name: Install dependencies
         run: npm ci
 
       - name: Expo prebuild
         run: npx expo prebuild --platform android --clean
 
-      - name: Block releases while signing material is tracked in source
+      - name: Protect signing material
         run: |
           if git ls-files | grep -Eq '(^|/)(release\.keystore|keystore_base64\.txt)$'; then
-            echo "::error::Signing material is tracked in source; remove it and rotate the signing identity before releasing."
+            echo "::error::Signing material is tracked in source."
             exit 1
           fi
 
-      - name: Set versionCode from run number
+      - name: Set release versionCode
         run: |
-          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i -E "s/(versionCode )[0-9]+/\1${{ github.run_number }}/" android/app/build.gradle
           grep -n "versionCode" android/app/build.gradle
 
       - name: Configure Gradle memory
         run: |
-          cat >> android/gradle.properties << 'PROPSEOF'
+          cat >> android/gradle.properties <<'PROPS'
           org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
           org.gradle.workers.max=2
           org.gradle.parallel=false
           kotlin.daemon.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m
-          PROPSEOF
+          PROPS
 
-      - name: Decode keystore and configure signing
+      - name: Check secrets and decode keystore
         working-directory: android
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/release.keystore
-          python3 << 'GRADLEEOF'
-          with open("app/build.gradle") as f:
-              content = f.read()
-          signing_block = '''    signingConfigs {
-              release {
-                  storeFile file('release.keystore')
-                  storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
-                  keyAlias System.getenv("ANDROID_KEY_ALIAS")
-                  keyPassword System.getenv("ANDROID_KEY_PASSWORD")
-              }
-          }
-          '''
-          content = content.replace("android {\n", "android {\n" + signing_block, 1)
-          content = content.replace(
-              "signingConfig signingConfigs.debug",
-              "signingConfig signingConfigs.release"
-          )
-          with open("app/build.gradle", "w") as f:
-              f.write(content)
-          GRADLEEOF
+          set -euo pipefail
 
-      - name: Build release APK
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required signing secret $name is missing."
+              exit 1
+            fi
+          done
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release.keystore
+
+          test -s app/release.keystore
+
+          keytool -list \
+            -keystore app/release.keystore \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS"
+
+      - name: Configure release signing in Gradle
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("android/app/build.gradle")
+          content = path.read_text()
+
+          needle = "    signingConfigs {"
+          if needle not in content:
+              raise SystemExit("Existing signingConfigs block not found.")
+
+          signing = '''    signingConfigs {
+                  release {
+                      storeFile file("release.keystore")
+                      storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                      keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+                  }'''
+
+          content = content.replace(needle, signing, 1)
+
+          build_types = content.find("    buildTypes {")
+          if build_types == -1:
+              raise SystemExit("buildTypes block not found.")
+
+          release_block = content.find("        release {", build_types)
+          if release_block == -1:
+              raise SystemExit("Release build type not found.")
+
+          tail = content[release_block:]
+          old = "signingConfig signingConfigs.debug"
+
+          if old not in tail:
+              raise SystemExit("Expected release debug-signing reference not found.")
+
+          tail = tail.replace(
+              old,
+              "signingConfig signingConfigs.release",
+              1
+          )
+
+          content = content[:release_block] + tail
+          path.write_text(content)
+
+          print("Release signing configured successfully.")
+          PY
+
+      - name: Build signed release APK
         working-directory: android
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease -x lintVitalAnalyzeRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
+        run: |
+          ./gradlew assembleRelease \
+            -x lintVitalAnalyzeRelease \
+            -PreactNativeArchitectures=arm64-v8a \
+            --stacktrace
 
-      - name: Upload signed APK artifact
+      - name: Verify APK signature and certificate
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          APK="app/build/outputs/apk/release/app-release.apk"
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          BUILD_TOOLS="$(ls "$SDK/build-tools" | sort -V | tail -n 1)"
+          APKSIGNER="$SDK/build-tools/$BUILD_TOOLS/apksigner"
+
+          test -s "$APK"
+          test -x "$APKSIGNER"
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+          APK_CERT=$("$APKSIGNER" verify --print-certs "$APK" 2>&1 |
+            awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}' |
+            tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')
+
+          KEY_CERT=$(keytool -list -v \
+            -keystore app/release.keystore \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" 2>&1 |
+            awk -F': ' '/SHA256:/ {print $2; exit}' |
+            tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')
+
+          if [ -z "$APK_CERT" ] || [ -z "$KEY_CERT" ]; then
+            echo "::error::Could not retrieve signing certificate fingerprints."
+            exit 1
+          fi
+
+          if [ "$APK_CERT" != "$KEY_CERT" ]; then
+            echo "::error::APK certificate does not match the release keystore."
+            exit 1
+          fi
+
+          echo "APK signature verified."
+          echo "APK certificate matches the configured keystore."
+
+      - name: Upload verified signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: obsidian-release-apk
+          name: obsidian-release-apk-${{ github.run_number }}
           path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk "Obsidian-v${{ github.run_number }}.apk"
-          gh release create "v${{ github.run_number }}" "Obsidian-v${{ github.run_number }}.apk" \
+          cp android/app/build/outputs/apk/release/app-release.apk \
+            "Obsidian-v${{ github.run_number }}.apk"
+
+          gh release create "v${{ github.run_number }}" \
+            "Obsidian-v${{ github.run_number }}.apk" \
             --repo "${{ github.repository }}" \
             --title "Obsidian build ${{ github.run_number }}" \
-            --generate-notes --latest
+            --generate-notes \
+            --latest
