@@ -6,6 +6,11 @@ import { useEvent } from "expo";
 import { AppState } from "react-native";
 import { logPlay } from "../data/listeningHistory";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  loadEqualizerSettings,
+  subscribeEqualizerSettings,
+} from "../equalizerSettings";
+
 
 // ---------------------------------------------------------------------------
 // Unified playback engine for both mp3 (expo-audio) and mp4 (expo-video).
@@ -68,8 +73,41 @@ export default function usePlaybackEngine(track) {
   const uri = resolveUri(track);
 
   // ---- Audio branch (expo-audio) - created once, idle, no initial source ----
-  const audioPlayer = useAudioPlayer(null, { updateInterval: 100 });
+  const audioPlayer = useAudioPlayer(null, { updateInterval: 250 });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
+
+  // ---- Obsidian equalizer: apply settings to the actual Expo Audio player ----
+  const [equalizerSettings, setEqualizerSettings] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const receiveSettings = (settings) => {
+      if (mounted) setEqualizerSettings(settings);
+    };
+
+    loadEqualizerSettings().then(receiveSettings);
+    const unsubscribe = subscribeEqualizerSettings(receiveSettings);
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!equalizerSettings || !audioPlayer) return;
+    if (typeof audioPlayer.setEqualizer !== "function") return;
+
+    // Stored presets use millibels and 0-1000 bass.
+    // The native Expo Audio bridge accepts dB and 0-100 bass.
+    audioPlayer.setEqualizer(
+      equalizerSettings.enabled,
+      equalizerSettings.levels.map(value => value / 100),
+      equalizerSettings.bass / 10
+    );
+  }, [equalizerSettings, audioPlayer, audioStatus?.isLoaded, uri]);
+
 
   // ---- Video branch (expo-video) - same idea, created once ----
   const videoPlayer = useVideoPlayer(null, (player) => {

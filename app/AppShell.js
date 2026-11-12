@@ -101,20 +101,21 @@ export default function AppShell({
   const previousScreenKey = useRef(screenKey);
   const swipeDir = useRef(0);
 
-  useEffect(() => {
-    if (previousScreenKey.current === screenKey) return;
-    previousScreenKey.current = screenKey;
-    screenOpacity.setValue(swipeDir.current ? 0.35 : 0);
-    const fast = swipeDir.current !== 0;
-    screenTranslateX.setValue(fast ? swipeDir.current * 40 : 14);
-    swipeDir.current = 0;
-    const transition = Animated.parallel([
-      Animated.timing(screenOpacity, { toValue: 1, duration: fast ? 130 : 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(screenTranslateX, { toValue: 0, duration: fast ? 170 : 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-    ]);
-    transition.start();
-    return () => transition.stop();
-  }, [screenKey, screenOpacity, screenTranslateX]);
+  // Old JS screen transition disabled — React Navigation handles tab animation now.
+  // useEffect(() => {
+  //   if (previousScreenKey.current === screenKey) return;
+  //   previousScreenKey.current = screenKey;
+  //   screenOpacity.setValue(swipeDir.current ? 0.35 : 0);
+  //   const fast = swipeDir.current !== 0;
+  //   screenTranslateX.setValue(fast ? swipeDir.current * 40 : 14);
+  //   swipeDir.current = 0;
+  //   const transition = Animated.parallel([
+  //     Animated.timing(screenOpacity, { toValue: 1, duration: fast ? 130 : 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+  //     Animated.timing(screenTranslateX, { toValue: 0, duration: fast ? 170 : 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+  //   ]);
+  //   transition.start();
+  //   return () => transition.stop();
+  // }, [screenKey, screenOpacity, screenTranslateX]);
 
   // Swipe to change tabs, following the bottom-nav order
   const swipeGesture = Gesture.Pan()
@@ -278,7 +279,7 @@ export default function AppShell({
       ) : (
         <>
           {nowPlaying && (
-            <View style={[styles.miniLayer, { bottom: navHeight + 8 }]} pointerEvents="box-none">
+            <View style={[styles.miniLayer, { bottom: 72 }]} pointerEvents="box-none">
               {/* Full mini bar */}
               <Animated.View
                 pointerEvents={collapsed ? "none" : "auto"}
@@ -358,7 +359,8 @@ export default function AppShell({
             </View>
           )}
 
-          {/* Docked nav */}
+          {/* Custom nav removed — React Navigation tab bar is now used */}
+          {false && (
           <View style={[styles.navDock, { height: navHeight, paddingBottom: navBottomPad }]}>
             {NAV_ITEMS.map((item) => {
               const active = item.key === activeNav;
@@ -401,6 +403,7 @@ export default function AppShell({
               );
             })}
           </View>
+          )}
         </>
       )}
     </View>
@@ -410,7 +413,7 @@ export default function AppShell({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
   // Ends 20px inside the nav so the nav's rounded top corners reveal content, not black.
-  screenArea: { flex: 1, paddingBottom: NAV_HEIGHT - 20 },
+  screenArea: { flex: 1, paddingBottom: 0 },
 
   navDock: {
     position: "absolute", left: 0, right: 0, bottom: 0, height: NAV_HEIGHT,

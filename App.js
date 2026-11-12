@@ -6,6 +6,8 @@ import { StatusBar } from "expo-status-bar";
 import { View, ActivityIndicator } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AppShell from "./app/AppShell";
+import { NavigationContainer } from "@react-navigation/native";
+import MainTabs from "./app/MainTabs";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import HomeScreen from "./screens/HomeScreen";
 import LibraryScreen from "./screens/library/LibraryScreen";
@@ -493,19 +495,21 @@ export default function App() {
   const stableGoMostPlayed = useStableFn(() => goToDrawerScreen("mostPlayed"));
 
   let content;
-  if (activeDrawerScreen === "news") {
+  // NON-MUSIC SCREENS DISABLED (weather, food, jokes, trivia, news, art, rest)
+  // Restore later only if you deliberately want a non-music app.
+  if (false && activeDrawerScreen === "news") {
     content = <NewsScreen onBack={backFromDrawerScreen} />;
-  } else if (activeDrawerScreen === "rest") {
+  } else if (false && activeDrawerScreen === "rest") {
     content = <RestScreen onBack={backFromDrawerScreen} />;
-  } else if (activeDrawerScreen === "art") {
+  } else if (false && activeDrawerScreen === "art") {
     content = <ArtScreen onBack={backFromDrawerScreen} />;
-  } else if (activeDrawerScreen === "weather") {
+  } else if (false && activeDrawerScreen === "weather") {
     content = <WeatherScreen onBack={backFromDrawerScreen} />;
-  } else if (activeDrawerScreen === "trivia") {
+  } else if (false && activeDrawerScreen === "trivia") {
     content = <TriviaScreen onBack={backFromDrawerScreen} />;
-  } else if (activeDrawerScreen === "jokes") {
+  } else if (false && activeDrawerScreen === "jokes") {
     content = <JokesScreen onBack={backFromDrawerScreen} />;
-  } else if (activeDrawerScreen === "food") {
+  } else if (false && activeDrawerScreen === "food") {
     content = <FoodScreen onBack={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "pasteUrl") {
     content = <PasteUrlScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
@@ -513,7 +517,7 @@ export default function App() {
     content = <RecentScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "mostPlayed") {
     content = <MostPlayedScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
-  } else if (activeDrawerScreen === "aiChat") {
+  } else if (false && activeDrawerScreen === "aiChat") {
     content = <AIChatScreen onClose={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "inbox") {
     content = selectedShareFriend ? (
@@ -538,25 +542,20 @@ export default function App() {
         onBack={backFromDrawerScreen}
       />
     );
-  } else if (activeNav === "home") {
+  } else if (!activeDrawerScreen) {
+    // Main tabs stay mounted — this removes the lag
     content = (
-      <HomeScreen
-        onTrackPress={playTrack}
-        onDrawerTilePress={goToDrawerScreen}
-        onSearchPress={() => setActiveNav("search")}
-        onPasteLinkPress={() => goToDrawerScreen("pasteUrl")}
-        onRecentPress={() => goToDrawerScreen("recent")}
-        onAIChatPress={() => goToDrawerScreen("aiChat")}
-        onInboxPress={() => goToDrawerScreen("inbox")}
-        onSettingsPress={() => setActiveNav("settings")}
-        nowPlaying={nowPlaying}
-        engine={engine}
-      />
+      <NavigationContainer independent>
+        <MainTabs
+          playTrack={stablePlayTrack}
+          goToDrawerScreen={goToDrawerScreen}
+          nowPlaying={nowPlaying}
+          engine={engine}
+          onSearchPress={() => setActiveNav("search")}
+          onMostPlayedPress={stableGoMostPlayed}
+        />
+      </NavigationContainer>
     );
-  } else if (activeNav === "library" || activeNav === "videos" || activeNav === "downloads") {
-    content = <LibraryScreenMemo section={activeNav === "videos" ? "Videos" : activeNav === "downloads" ? "Downloads" : undefined} onTrackPress={stablePlayTrack} onSearchPress={stableGoSearch} onMostPlayedPress={stableGoMostPlayed} />;
-  } else if (activeNav === "search") {
-    content = <SearchScreenMemo onTrackPress={stablePlayTrack} />;
   } else if (activeNav === "settings") {
     content = (
       <SettingsScreen

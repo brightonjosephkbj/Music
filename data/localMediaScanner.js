@@ -58,15 +58,22 @@ async function fillThumbnails(assets, thumbs) {
 
 function toLibraryItem(asset, type, artwork = null) {
   const { title, artist } = parseLibraryFilename(asset.filename);
+  // Skip obvious junk (voice notes, screen recordings, etc.) unless the filename
+  // matches the app's own library naming pattern.
+  const name = (asset.filename || "").toLowerCase();
+  const looksLikeOurs = name.includes("b24") || name.includes("obsidian") || / - .+\.(mp3|m4a|mp4|webm)$/i.test(asset.filename || "");
+  if (!looksLikeOurs && (name.includes("whatsapp") || name.includes("voice") || name.includes("screen") || name.startsWith("aud-"))) {
+    return null;
+  }
   return {
     id: `device_${asset.id}`,
-    type, // "audio" | "video"
+    type,
     title,
     artist,
     artwork,
     localUri: asset.uri,
     duration: asset.duration || 0,
-    source: "device", // distinguishes scanned files from app-initiated downloads
+    source: "device",
     addedAt: asset.creationTime || Date.now(),
   };
 }

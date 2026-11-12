@@ -28,6 +28,7 @@ import { fetchLyrics, activeLyricIndex, saveLyrics } from "../services/lyricsCli
 import LyricsFallback from "./LyricsFallback";
 import ConfigureAudioScreen from "../screens/ConfigureAudioScreen";
 import { trackKey } from "../data/audioSettings";
+import EqualizerScreen from '../EqualizerScreen';
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
 const CARD_TABS = ["Up next", "Lyrics", "Related"];
@@ -89,6 +90,8 @@ export default function PlayerCard({
   queueIndex,
   onPlayQueueItem,
 }) {
+  const [equalizerVisible, setEqualizerVisible] = useState(false);
+
   const { width: W, height: H } = useWindowDimensions();
   const topPad = (StatusBar.currentHeight || 28) + 6;
   const NAV_CLEAR = Platform.OS === "android" ? 44 : 0;
@@ -638,6 +641,7 @@ export default function PlayerCard({
 
   // ---------------- UI ----------------
   return (
+    <>
     <Animated.View style={[styles.root, { opacity: entranceOpacity, transform: [{ translateY: Animated.add(dragY, entranceY) }] }]}>
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: topPad }]}>
@@ -654,6 +658,13 @@ export default function PlayerCard({
         </View>
         <TouchableOpacity onPress={openShareSheet} style={styles.iconBtn} accessibilityLabel="Send to a friend">
           <Ionicons name="paper-plane-outline" size={22} color={C.ink} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setEqualizerVisible(true)}
+          style={styles.iconBtn}
+          accessibilityLabel="Open equalizer"
+        >
+          <Ionicons name="options-outline" size={23} color={C.ink} />
         </TouchableOpacity>
       </View>
 
@@ -1050,6 +1061,31 @@ export default function PlayerCard({
         </TouchableOpacity>
       </Modal>
     </Animated.View>
+    <Modal
+      visible={equalizerVisible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={() => setEqualizerVisible(false)}
+    >
+      <View style={{ flex: 1, backgroundColor: "#101114" }}>
+        <TouchableOpacity
+          onPress={() => setEqualizerVisible(false)}
+          style={{
+            padding: 16,
+            paddingTop: Platform.OS === "android" ? 35 : 16,
+            flexDirection: "row",
+            alignItems: "center",
+          }}
+        >
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          <Text style={{ color: "#FFFFFF", marginLeft: 12, fontSize: 17 }}>
+            Back to player
+          </Text>
+        </TouchableOpacity>
+        <EqualizerScreen />
+      </View>
+    </Modal>
+    </>
   );
 }
 

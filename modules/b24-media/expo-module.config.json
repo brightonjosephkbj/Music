@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["B24MediaModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.b24media.B24MediaModule"]
+  }
+}
