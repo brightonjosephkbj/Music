@@ -53,3 +53,8 @@ android/app/release.keystore
 # Android signing material must come from restricted build secrets only.
 *.keystore
 keystore_base64.txt
+*.bak
+*.backup
+*-backup
+*.pre-eq-wire-backup
+*.before-equalizer
