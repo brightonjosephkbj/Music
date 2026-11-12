@@ -114,7 +114,7 @@ function ShareRow({ item, isUnseen, onPress }) {
           <Text style={styles.sharedText}> shared a track</Text>
         </Text>
         <Text style={styles.trackTitle} numberOfLines={1}>
-          {meta.title || item.item_id}
+          {meta.title || meta.message || item.item_id}
         </Text>
         {!!meta.artist && (
           <Text style={styles.trackArtist} numberOfLines={1}>

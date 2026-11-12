@@ -20,8 +20,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Image,
-  RefreshControl,
-} from "react-native";
+  RefreshControl, TextInput } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { getCurrentUser, getShareThread, markSharesSeen, sendShare } from "../services/shareClient";
 import { getDownloads } from "../data/libraryStorage";
@@ -117,6 +116,16 @@ function ThreadRow({ item, isUnseen, onPress, onGet, getState, saved }) {
   const meta = item.item_meta || {};
   const sent = item.direction === "sent";
   const busy = !!getState && getState.stage !== "error";
+  if (item.item_type === "text") {
+    return (
+      <View style={{ alignItems: sent ? "flex-end" : "flex-start", marginBottom: 10 }}>
+        <View style={{ maxWidth: "80%", backgroundColor: sent ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.08)", borderRadius: 16, paddingVertical: 9, paddingHorizontal: 13 }}>
+          <Text style={{ color: "#fff", fontSize: 14 }}>{meta.message}</Text>
+          <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10.5, marginTop: 3 }}>{timeAgo(item.created_at)}</Text>
+        </View>
+      </View>
+    );
+  }
   return (
     <View>
     <TouchableOpacity style={styles.row} onPress={() => onPress(item)}>
@@ -279,6 +288,30 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
       .map((d) => ({ id: d.id, title: d.title, artist: d.artist, artwork_url: d.artwork, source_url: d.source_url || null, duration: d.duration || 0 }));
   }, []);
 
+  const [draft, setDraft] = useState("");
+  const [sendingText, setSendingText] = useState(false);
+  const [textError, setTextError] = useState("");
+
+  const handleSendText = useCallback(async () => {
+    const text = draft.trim();
+    if (!text || sendingText || !user?.id || !friend?.id) return;
+    setSendingText(true);
+    setTextError("");
+    try {
+      await sendShare(user.id, friend.id, {
+        item_type: "text",
+        item_id: "text_" + Date.now(),
+        item_meta: { title: "", message: text },
+      });
+      setDraft("");
+      await loadThread(user.id, friend.id);
+    } catch (e) {
+      setTextError("Could not send. The server may not accept text messages yet.");
+    } finally {
+      setSendingText(false);
+    }
+  }, [draft, sendingText, user?.id, friend?.id, loadThread]);
+
   const handleSendShare = useCallback(
     async (item, message) => {
       if (!user?.id || !friend?.id) return;
@@ -357,6 +390,29 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
         />
       )}
 
+      {!!textError && (
+        <Text style={{ color: "#FF8A8A", fontSize: 12, marginHorizontal: 16, marginBottom: 4 }}>{textError}</Text>
+      )}
+      <View style={styles.composeBar}>
+        <TextInput
+          style={styles.composeInput}
+          placeholder="Message"
+          placeholderTextColor="rgba(255,255,255,0.4)"
+          value={draft}
+          onChangeText={setDraft}
+          multiline
+          maxLength={500}
+        />
+        {draft.trim().length > 0 && (
+          <TouchableOpacity style={styles.composeBtn} onPress={handleSendText} disabled={sendingText} activeOpacity={0.8}>
+            <Text style={styles.composeBtnText}>{sendingText ? "..." : "\u27A4"}</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={styles.composeBtn} onPress={() => setPickerOpen(true)} activeOpacity={0.8}>
+          <Text style={styles.composeBtnText}>+</Text>
+        </TouchableOpacity>
+      </View>
+
       <SelectItemSheet
         visible={pickerOpen}
         onClose={() => setPickerOpen(false)}
@@ -409,6 +465,10 @@ const styles = StyleSheet.create({
 
   trackTitle: { color: "#fff", fontSize: 15, fontWeight: "600" },
   trackArtist: { color: "#9A9A9E", fontSize: 13, marginTop: 1 },
+  composeBar: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" },
+  composeInput: { flex: 1, minHeight: 42, maxHeight: 110, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: 21, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, color: "#fff", fontSize: 14, backgroundColor: "rgba(255,255,255,0.06)" },
+  composeBtn: { width: 42, height: 42, borderRadius: 21, marginLeft: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#FF6B6B" },
+  composeBtnText: { color: "#fff", fontSize: 20, fontWeight: "800" },
   messageText: { color: "#C9C9CD", fontSize: 12.5, marginTop: 4, fontStyle: "italic" },
   directionText: { fontSize: 11, marginTop: 4, fontWeight: "600" },
   sentText: { color: AMBER },

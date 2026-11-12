@@ -119,6 +119,18 @@ export default function HeroCard({ slides = [] }) {
 
               <View style={styles.textCol}>
                 <Text style={styles.label}>{s.label}</Text>
+                {!!s.sender && (
+                  <View style={styles.senderRow}>
+                    {s.sender.avatarUrl ? (
+                      <Image source={{ uri: s.sender.avatarUrl }} style={styles.senderAvatar} />
+                    ) : (
+                      <View style={[styles.senderAvatar, styles.senderFallback]}>
+                        <Text style={styles.senderLetter}>{(s.sender.letter || "?").toUpperCase()}</Text>
+                      </View>
+                    )}
+                    <Text style={styles.senderName} numberOfLines={1}>{s.sender.name}</Text>
+                  </View>
+                )}
                 <Text style={styles.title} numberOfLines={2}>
                   {s.title}
                 </Text>
@@ -152,6 +164,11 @@ const styles = StyleSheet.create({
   slide: { width: CARD_W, height: CARD_H, justifyContent: "center" },
   art: { position: "absolute", top: 0, right: 0, width: CARD_W * 0.42, height: CARD_H },
   textCol: { paddingHorizontal: 14, width: "58%" },
+  senderRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
+  senderAvatar: { width: 22, height: 22, borderRadius: 11 },
+  senderFallback: { backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
+  senderLetter: { color: "#F5F3FA", fontSize: 11, fontWeight: "800" },
+  senderName: { color: "#F5F3FA", fontSize: 13, fontWeight: "700", marginLeft: 8, flexShrink: 1 },
   label: { color: ORCHID, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
   title: { color: "#F5F3FA", fontSize: 18, fontWeight: "800", marginTop: 4 },
   tagline: { color: "rgba(245,243,250,0.7)", fontSize: 12, marginTop: 4 },

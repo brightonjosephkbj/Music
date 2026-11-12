@@ -5,7 +5,7 @@ let AsyncStorage = null;
 try { AsyncStorage = require("@react-native-async-storage/async-storage").default; } catch (e) {}
 
 const KEY = "b24_dismissed_announcement";
-const DEBUG = true; // set false when done
+const DEBUG = false; // set false when done
 
 export default function useAnnouncementSlide() {
   const [ann, setAnn] = useState(null);

@@ -250,3 +250,14 @@ export async function uploadPlaylistArt(localUri) {
   }
   return data.data.url;
 }
+
+export async function addGroupPlaylistMembers(playlistId, userId, userIds) {
+  const res = await fetch(`${API_BASE}/api/db/group-playlists/${playlistId}/members/add`, {
+    method: "POST",
+    headers: await authedHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ added_by: userId, user_ids: userIds }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || "Failed to add members");
+  return data.data;
+}

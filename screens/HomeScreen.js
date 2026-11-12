@@ -21,6 +21,9 @@ import TrendingRow from "../components/home/HomeTrendingRow";
 import HeroCard, { buildHeroSlides } from "../components/home/HomeHeroCard";
 import useHeroMix from "../hooks/useHeroMix";
 import useAnnouncementSlide from "../hooks/useAnnouncementSlide";
+import useSharedSongSlide from "../hooks/useSharedSongSlide";
+import { useDownloads as useShareDownloads } from "../context/DownloadsContext";
+import { markSharesSeen } from "../services/shareClient";
 import AnalogClock from "../components/AnalogClock";
 import MoviesRow from "../components/MoviesRow";
 import HomeBackground from "../components/home/HomeBackground";
@@ -192,12 +195,28 @@ export default function HomeScreen({
         if (u?.id) {
           const list = await getShareInbox(u.id, { unseenOnly: true, app: "music" });
           setUnseenShareCount(list.length);
+          setShareItems(list);
+          setShareUserId(u.id);
         }
       } catch (e) {
         // non-critical
       }
     })();
   }, []);
+
+  const [shareItems, setShareItems] = useState([]);
+  const [shareUserId, setShareUserId] = useState(null);
+  const shareDl = useShareDownloads();
+  const sharedSlide = useSharedSongSlide({
+    items: shareItems,
+    dlHooks: shareDl,
+    onTrackPress,
+    onPlayed: (it) => {
+      setShareItems((l) => l.filter((x) => x.id !== it.id));
+      setUnseenShareCount((n) => Math.max(0, n - 1));
+      if (shareUserId) markSharesSeen(shareUserId, [it.id]).catch(() => {});
+    },
+  });
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -297,7 +316,7 @@ export default function HomeScreen({
 
         {/* ---------- Hero card: swipeable featured slides ---------- */}
         {!loading && !error && (
-          <HeroCard slides={[...(annSlide ? [annSlide] : []), ...buildHeroSlides(tracks, onTrackPress), ...(mixSlide ? [mixSlide] : [])]} />
+          <HeroCard slides={[...(annSlide ? [annSlide] : []), ...(sharedSlide ? [sharedSlide] : []), ...buildHeroSlides(tracks, onTrackPress), ...(mixSlide ? [mixSlide] : [])]} />
         )}
 
         {/* ---------- Action tiles: Paste Link / Downloads / AI Music ---------- */}

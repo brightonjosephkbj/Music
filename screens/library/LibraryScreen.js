@@ -67,7 +67,7 @@ import * as ImagePicker from "expo-image-picker";
 import {
   getCurrentUser, listFriends, createGroupPlaylist, listGroupPlaylists,
   getGroupPlaylistTracks, addGroupPlaylistTrack, deleteGroupPlaylistTrack,
-  updateGroupPlaylist, uploadPlaylistArt,
+  updateGroupPlaylist, uploadPlaylistArt, addGroupPlaylistMembers, getGroupPlaylistMembers,
 } from "../../services/shareClient";
 import { reportScrollY } from "../../utils/shellScroll";
 
@@ -199,6 +199,12 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
   const [groupInfoName, setGroupInfoName] = useState("");
   const [groupInfoArtUri, setGroupInfoArtUri] = useState(null); // local preview uri, may be existing remote url
   const [groupInfoSaving, setGroupInfoSaving] = useState(false);
+  const [addMembersVisible, setAddMembersVisible] = useState(false);
+  const [addMembersFriends, setAddMembersFriends] = useState([]);
+  const [addMembersLoading, setAddMembersLoading] = useState(false);
+  const [addMembersSelected, setAddMembersSelected] = useState(new Set());
+  const [addMembersSaving, setAddMembersSaving] = useState(false);
+  const [addMembersMsg, setAddMembersMsg] = useState("");
 
   const [selectedFolder, setSelectedFolder] = useState(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
@@ -630,6 +636,46 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
       setGroupFriendsLoading(false);
     }
   }, []);
+
+  const openAddMembers = useCallback(async () => {
+    if (!selectedGroupPlaylist) return;
+    setAddMembersSelected(new Set());
+    setAddMembersMsg("");
+    setAddMembersFriends([]);
+    setAddMembersVisible(true);
+    setAddMembersLoading(true);
+    try {
+      const user = await getCurrentUser();
+      if (user?.id) {
+        const [friends, members] = await Promise.all([
+          listFriends(user.id),
+          getGroupPlaylistMembers(selectedGroupPlaylist.id).catch(() => []),
+        ]);
+        const inIds = new Set((members || []).map((m) => m.user_id ?? m.id));
+        setAddMembersFriends((friends || []).filter((f) => !inIds.has(f.id)));
+      }
+    } catch (e) {
+      console.warn("Failed to load friends for add members:", e.message);
+    } finally {
+      setAddMembersLoading(false);
+    }
+  }, [selectedGroupPlaylist]);
+
+  const submitAddMembers = useCallback(async () => {
+    if (!selectedGroupPlaylist || addMembersSaving || addMembersSelected.size === 0) return;
+    setAddMembersSaving(true);
+    setAddMembersMsg("");
+    try {
+      const user = await getCurrentUser();
+      if (!user?.id) throw new Error("Not signed in");
+      await addGroupPlaylistMembers(selectedGroupPlaylist.id, user.id, Array.from(addMembersSelected));
+      setAddMembersVisible(false);
+    } catch (e) {
+      setAddMembersMsg("Could not add: " + e.message);
+    } finally {
+      setAddMembersSaving(false);
+    }
+  }, [selectedGroupPlaylist, addMembersSaving, addMembersSelected]);
 
   const submitGroupPlaylist = useCallback(async () => {
     const name = groupName.trim();
@@ -1953,6 +1999,57 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
       </Modal>
 
       {/* Edit Group Playlist info - name + image picker (no URL entry) */}
+      <Modal visible={addMembersVisible} transparent animationType="fade" onRequestClose={() => setAddMembersVisible(false)}>
+        <View style={styles.promptBackdrop}>
+          <View style={[styles.promptCard, { maxHeight: "75%" }]}>
+            <Text style={styles.promptTitle}>Add friends to playlist</Text>
+            {addMembersLoading ? (
+              <Text style={styles.emptyText}>Loading friends...</Text>
+            ) : (
+              <FlatList
+                data={addMembersFriends}
+                keyExtractor={(item) => String(item.id)}
+                renderItem={({ item }) => {
+                  const checked = addMembersSelected.has(item.id);
+                  return (
+                    <TouchableOpacity
+                      style={styles.addSongRow}
+                      onPress={() => {
+                        setAddMembersSelected((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(item.id)) next.delete(item.id);
+                          else next.add(item.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      <View style={[styles.editCheckbox, checked && styles.editCheckboxChecked]}>
+                        {checked && <Ionicons name="checkmark" size={14} color="#000" />}
+                      </View>
+                      <Text style={styles.addSongTitle}>{item.username}</Text>
+                    </TouchableOpacity>
+                  );
+                }}
+                ListEmptyComponent={<Text style={styles.emptyText}>No friends to add.</Text>}
+              />
+            )}
+            {!!addMembersMsg && <Text style={{ color: "#FF8A8A", fontSize: 12, marginTop: 6 }}>{addMembersMsg}</Text>}
+            <View style={styles.promptButtons}>
+              <TouchableOpacity onPress={() => setAddMembersVisible(false)} style={styles.promptButton}>
+                <Text style={styles.promptButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={submitAddMembers}
+                disabled={addMembersSaving || addMembersSelected.size === 0}
+                style={[styles.promptButton, styles.promptButtonPrimary, (addMembersSaving || addMembersSelected.size === 0) && { opacity: 0.6 }]}
+              >
+                <Text style={styles.promptButtonText}>{addMembersSaving ? "Adding..." : "Add"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={groupInfoVisible} transparent animationType="fade" onRequestClose={() => setGroupInfoVisible(false)}>
         <View style={styles.promptBackdrop}>
           <View style={styles.promptCard}>
@@ -1973,6 +2070,13 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
                 <Ionicons name="image-outline" size={22} color="rgba(255,255,255,0.5)" />
               )}
               <Text style={styles.imagePickText}>{groupInfoArtUri ? "Change Image" : "Choose Image"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.imagePickButton}
+              onPress={() => { setGroupInfoVisible(false); openAddMembers(); }}
+            >
+              <Ionicons name="person-add-outline" size={22} color="rgba(255,255,255,0.5)" />
+              <Text style={styles.imagePickText}>Add friends</Text>
             </TouchableOpacity>
             <View style={styles.promptButtons}>
               <TouchableOpacity onPress={() => setGroupInfoVisible(false)} style={styles.promptButton}>
