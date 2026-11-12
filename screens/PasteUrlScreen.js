@@ -16,6 +16,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
+import { finalizeDownload } from "../services/mediaConvert";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { buildLibraryFilename } from "../utils/libraryFileNaming";
 import { saveDownloadToSharedStorage } from "../data/mediaLibrarySave";
@@ -216,6 +217,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
       );
       await downloadResumable.downloadAsync();
 
+        await finalizeDownload(localUri, mode);
         await saveDownloadToSharedStorage(localUri);
 
       const entry = {
@@ -323,6 +325,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
 
         await downloadResumable.downloadAsync();
         if (isCancelled(dlKey)) continue;
+        await finalizeDownload(localUri, option.mode);
         await saveDownloadToSharedStorage(localUri);
 
         const entryId = dlKey;

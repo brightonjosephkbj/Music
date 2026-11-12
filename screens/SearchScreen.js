@@ -19,6 +19,7 @@ import HomeBackground from "../components/home/HomeBackground";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
+import { finalizeDownload } from "../services/mediaConvert";
 import { getDownloads, saveDownloads, addDownloadEntry } from "../data/libraryStorage";
 import { useDownloads } from "../context/DownloadsContext";
 import useSuggestions from "../hooks/useSuggestions";
@@ -497,6 +498,7 @@ export default function SearchScreen({ onTrackPress }) {
         try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
         return;
       }
+      await finalizeDownload(localUri, option.mode);
       await saveDownloadToSharedStorage(localUri);
 
       const entry = {
@@ -567,6 +569,7 @@ export default function SearchScreen({ onTrackPress }) {
           }
         );
         await downloadResumable.downloadAsync();
+        await finalizeDownload(localUri, option.mode);
         await saveDownloadToSharedStorage(localUri);
 
         const entry = {
