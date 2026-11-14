@@ -33,10 +33,46 @@ async function sniff(uri) {
   return "other";
 }
 
+// Set to false to keep downloaded audio in whatever format the server sent.
+const AUDIO_TO_MP3 = true;
+const AUDIO_MP3_KBPS = 192;
+
+// m4a/aac -> mp3 with the Rust encoder. Returns the (possibly new) file uri.
+// Never throws: on any problem the original file is kept.
+async function finalizeAudio(localUri) {
+  if (!AUDIO_TO_MP3 || !native || !native.audioToMp3) return localUri;
+  const info = await FileSystem.getInfoAsync(localUri);
+  if (!info.exists || !info.size) return localUri;
+
+  const kind = await sniff(localUri);
+  if (kind !== "mp4") return localUri; // only m4a/aac converts; mp3 and opus stay as they are
+
+  const base = /\.(m4a|mp4|aac|webm|opus|ogg|mp3)$/i.test(localUri)
+    ? localUri.replace(/\.[^./]+$/, "")
+    : localUri;
+  const outUri = base + ".mp3";
+  if (outUri === localUri) return localUri;
+
+  try {
+    await FileSystem.deleteAsync(outUri, { idempotent: true });
+    await native.audioToMp3(localUri, outUri, AUDIO_MP3_KBPS);
+    const out = await FileSystem.getInfoAsync(outUri);
+    if (out.exists && out.size > 0) {
+      await FileSystem.deleteAsync(localUri, { idempotent: true });
+      return outUri;
+    }
+  } catch (e) {
+    console.log("audio convert failed, keeping original:", e && e.message);
+  }
+  await FileSystem.deleteAsync(outUri, { idempotent: true });
+  return localUri;
+}
+
 // Call right after a download finishes. Converts non-mp4 videos to mp4 in
 // place (same file name). Never throws: on any problem the original file stays.
 export async function finalizeDownload(localUri, mode) {
   try {
+    if (mode === "audio") return await finalizeAudio(localUri);
     if (mode !== "video" || !native || !native.videoToMp4) return localUri;
 
     const info = await FileSystem.getInfoAsync(localUri);

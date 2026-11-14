@@ -1,1 +1,1 @@
-export { videoToMp4 } from './src/B24MediaModule';
+export { videoToMp4, audioToMp3 } from './src/B24MediaModule';

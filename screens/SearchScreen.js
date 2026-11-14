@@ -471,7 +471,7 @@ export default function SearchScreen({ onTrackPress }) {
     setDownloadProgress(0);
     startDownload(key, { title: streamInfo.title || ytItem.title });
     try {
-      const localUri = FileSystem.documentDirectory + buildLibraryFilename(streamInfo.title || ytItem.title, ytItem.uploader, key, streamInfo.ext || option.ext);
+      let localUri = FileSystem.documentDirectory + buildLibraryFilename(streamInfo.title || ytItem.title, ytItem.uploader, key, streamInfo.ext || option.ext);
 
       const downloadResumable = FileSystem.createDownloadResumable(
         streamInfo.stream_url,
@@ -499,7 +499,7 @@ export default function SearchScreen({ onTrackPress }) {
         try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
         return;
       }
-      await finalizeDownload(localUri, option.mode);
+      localUri = await finalizeDownload(localUri, option.mode);
       await saveDownloadToSharedStorage(localUri);
 
       const entry = {
@@ -556,7 +556,7 @@ export default function SearchScreen({ onTrackPress }) {
       setDownloadProgress(0);
 
       try {
-        const localUri = FileSystem.documentDirectory + buildLibraryFilename(streamInfo.title || ytItem.title, ytItem.uploader, key, streamInfo.ext || option.ext);
+        let localUri = FileSystem.documentDirectory + buildLibraryFilename(streamInfo.title || ytItem.title, ytItem.uploader, key, streamInfo.ext || option.ext);
         const downloadResumable = FileSystem.createDownloadResumable(
           streamInfo.stream_url,
           localUri,
@@ -570,7 +570,7 @@ export default function SearchScreen({ onTrackPress }) {
           }
         );
         await downloadResumable.downloadAsync();
-        await finalizeDownload(localUri, option.mode);
+        localUri = await finalizeDownload(localUri, option.mode);
         await saveDownloadToSharedStorage(localUri);
 
         const entry = {

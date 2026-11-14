@@ -200,7 +200,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
       }
 
       const ext = mode === "audio" ? "mp3" : "mp4";
-      const localUri = FileSystem.documentDirectory + buildLibraryFilename(result.title, result.artist, dlKey, ext);
+      let localUri = FileSystem.documentDirectory + buildLibraryFilename(result.title, result.artist, dlKey, ext);
 
       const downloadResumable = FileSystem.createDownloadResumable(
         remoteUrl,
@@ -217,7 +217,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
       );
       await downloadResumable.downloadAsync();
 
-        await finalizeDownload(localUri, mode);
+        localUri = await finalizeDownload(localUri, mode);
         await saveDownloadToSharedStorage(localUri);
 
       const entry = {
@@ -303,7 +303,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
         const streamInfo = await lightningExtract(match.url, option.mode || "audio", option.quality);
         if (isCancelled(dlKey)) continue;
 
-        const localUri = FileSystem.documentDirectory + buildLibraryFilename(track.title, track.artist, dlKey, streamInfo.ext || option.ext);
+        let localUri = FileSystem.documentDirectory + buildLibraryFilename(track.title, track.artist, dlKey, streamInfo.ext || option.ext);
 
         const downloadResumable = FileSystem.createDownloadResumable(
           streamInfo.stream_url,
@@ -325,7 +325,7 @@ export default function PasteUrlScreen({ onTrackPress, onBack }) {
 
         await downloadResumable.downloadAsync();
         if (isCancelled(dlKey)) continue;
-        await finalizeDownload(localUri, option.mode);
+        localUri = await finalizeDownload(localUri, option.mode);
         await saveDownloadToSharedStorage(localUri);
 
         const entryId = dlKey;
