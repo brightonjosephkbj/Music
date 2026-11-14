@@ -29,7 +29,6 @@ import { fetchLyrics, activeLyricIndex, saveLyrics } from "../services/lyricsCli
 import LyricsFallback from "./LyricsFallback";
 import ConfigureAudioScreen from "../screens/ConfigureAudioScreen";
 import { trackKey } from "../data/audioSettings";
-import EqualizerScreen from '../EqualizerScreen';
 
 const API_BASE = "https://gateway-b0tx.onrender.com";
 const CARD_TABS = ["Up next", "Lyrics", "Related"];
@@ -1124,13 +1123,9 @@ export default function PlayerCard({
             Back to player
           </Text>
         </TouchableOpacity>
-        <EqualizerScreen />
+        <ConfigureAudioScreen trackId={trackKey(track)} trackTitle={track?.title} onBack={() => setEqualizerVisible(false)} />
       </View>
     </Modal>
-    </>
-  );
-}
-
 
       <Modal visible={playlistPicker} transparent animationType="fade" onRequestClose={() => setPlaylistPicker(false)}>
         <TouchableOpacity style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 }} activeOpacity={1} onPress={() => setPlaylistPicker(false)}>
@@ -1157,6 +1152,11 @@ export default function PlayerCard({
           </View>
         </TouchableOpacity>
       </Modal>
+    </>
+  );
+}
+
+
 
 const styles = StyleSheet.create({
   root: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.bg },
