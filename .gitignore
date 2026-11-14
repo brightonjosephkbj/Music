@@ -60,3 +60,4 @@ keystore_base64.txt
 *.before-equalizer
 native/b24audio/target
 modules/b24-media/android/src/main/jniLibs/
+native/b24audio/build.log

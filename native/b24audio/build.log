@@ -1,5 +1,0 @@
-nohup: ignoring input
-   Compiling mp3lame-sys v0.1.11
-   Compiling mp3lame-encoder v0.2.5
-   Compiling b24audio v0.1.0 (/data/data/com.termux/files/home/B24music_new/native/b24audio)
-    Finished `release` profile [optimized] target(s) in 27.73s
