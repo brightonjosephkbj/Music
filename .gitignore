@@ -58,3 +58,5 @@ keystore_base64.txt
 *-backup
 *.pre-eq-wire-backup
 *.before-equalizer
+native/b24audio/target
+modules/b24-media/android/src/main/jniLibs/

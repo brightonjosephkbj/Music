@@ -12,6 +12,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.Queues
+import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -69,5 +70,19 @@ class B24MediaModule : Module() {
         }
       }
     }.runOnQueue(Queues.MAIN)
+
+    // Converts m4a/aac/mp3 audio to mp3 with the Rust encoder.
+    AsyncFunction("audioToMp3") { inputPath: String, outputPath: String, kbps: Int ->
+      val outFile = File(toPath(outputPath))
+      outFile.parentFile?.mkdirs()
+      if (outFile.exists()) outFile.delete()
+      val msg = try {
+        B24Audio().nativeAudioToMp3(toPath(inputPath), outFile.absolutePath, kbps)
+      } catch (e: UnsatisfiedLinkError) {
+        throw CodedException("E_NO_LIB", "Rust audio library is not in this build", e)
+      }
+      if (msg.isNotEmpty()) throw CodedException("E_AUDIO", msg, null)
+      outFile.absolutePath
+    }.runOnQueue(Queues.DEFAULT)
   }
 }
