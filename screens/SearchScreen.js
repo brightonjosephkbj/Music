@@ -159,6 +159,7 @@ export default function SearchScreen({ onTrackPress }) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [hasSearched, setHasSearched] = useState(false);
   const [categories, setCategories] = useState({}); // { music: [...], podcast: [...], ... }
   const [searched, setSearched] = useState(false);
   const [showSuggest, setShowSuggest] = useState(false);

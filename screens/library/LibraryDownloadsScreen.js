@@ -90,7 +90,11 @@ export default function LibraryDownloadsScreen({
       renderItem={renderRow}
       contentContainerStyle={[styles.listContent, { paddingBottom: 170 }]}
       ListHeaderComponent={header}
-      ListEmptyComponent={<Text style={styles.emptyText}>Nothing downloaded yet.</Text>}
+      ListEmptyComponent={() => (
+        <View style={{ padding: 32, alignItems: "center" }}>
+          <Text style={{ color: "#aaa", fontSize: 16, textAlign: "center" }}>No downloads yet.\nSearch or paste a link to add music.</Text>
+        </View>
+      )}<Text style={styles.emptyText}>Nothing downloaded yet.</Text>}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
       initialNumToRender={12}
       maxToRenderPerBatch={12}

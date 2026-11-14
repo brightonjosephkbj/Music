@@ -48,8 +48,10 @@ import LoginScreen, { getStoredAuth, clearStoredAuth, updateStoredAuth } from ".
 import { generateAIPlaylist } from "./services/aiPlaylist";
 import { tokenExpired } from "./services/authExpiry";
 import { setReportScreen } from "./services/errorReporter";
+const LAST_PLAYBACK_KEY = "b24music:lastPlayback";
 import useAppResume from "./hooks/useAppResume";
 import { registerPlaybackControls, initMediaControls } from "./services/playbackBridge";
+import { registerQueueActions } from "./services/queueBridge";
 import { updateNowPlayingWidget } from "./widget/nowPlayingWidget";
 import { fetchLyrics, activeLyricIndex } from "./services/lyricsClient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -487,6 +489,75 @@ export default function App() {
     });
   }, [nowPlaying, engine.isPlaying, engine.position, engine.duration, currentLyricLine]);
 
+
+  // Persist last track + position so we can resume after kill
+  useEffect(() => {
+    if (!nowPlaying?.id) return;
+    const payload = {
+      track: nowPlaying,
+      queue,
+      queueIndex,
+      position: engine.position || 0,
+    };
+    AsyncStorage.setItem(LAST_PLAYBACK_KEY, JSON.stringify(payload)).catch(() => {});
+  }, [nowPlaying?.id, queueIndex, Math.floor((engine.position || 0) / 5)]);
+
+
+  // Restore last playback once per launch
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!authUser || restoredRef.current) return;
+    restoredRef.current = true;
+    AsyncStorage.getItem(LAST_PLAYBACK_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (!data?.track) return;
+        if (data.queue?.length) {
+          setQueue(data.queue);
+          setQueueIndex(typeof data.queueIndex === "number" ? data.queueIndex : 0);
+        }
+        setNowPlaying(data.track);
+        // Seek after the player has the source (short delay)
+        if (data.position > 1) {
+          setTimeout(() => {
+            try { engine.seekTo?.(data.position); } catch {}
+          }, 800);
+        }
+      })
+      .catch(() => {});
+  }, [authUser]);
+
+
+  const playNext = (track) => {
+    if (!track) return;
+    setQueue((q) => {
+      const next = [...q];
+      const at = Math.max(queueIndex + 1, 0);
+      next.splice(at, 0, track);
+      return next;
+    });
+  };
+
+  const addToQueue = (track) => {
+    if (!track) return;
+    setQueue((q) => [...q, track]);
+  };
+
+  const removeAt = (index) => {
+    setQueue((q) => q.filter((_, i) => i !== index));
+    setQueueIndex((i) => (index < i ? i - 1 : i));
+  };
+
+  const clearQueue = () => {
+    setQueue(nowPlaying ? [nowPlaying] : []);
+    setQueueIndex(nowPlaying ? 0 : -1);
+  };
+
+  useEffect(() => {
+    registerQueueActions({ playNext, addToQueue, removeAt, clear: clearQueue });
+  });
+
   const expandPlayer = () => setPlayerExpanded(true);
   const collapsePlayer = () => setPlayerExpanded(false);
 
@@ -620,8 +691,10 @@ export default function App() {
           onPlayTrack={playFromQueue}
           shuffleOn={shuffleOn}
           onShuffleToggle={toggleShuffle}
-          queue={queue.length ? [...queue.slice(queueIndex + 1), ...queue.slice(0, Math.max(queueIndex, 0))] : []}
-          queueIndex={-1}
+          queue={queue}
+          queueIndex={queueIndex}
+          onRemoveQueueItem={removeAt}
+          onClearQueue={clearQueue}
         />
       )}
       {playerExpanded && nowPlaying && isVideo && (

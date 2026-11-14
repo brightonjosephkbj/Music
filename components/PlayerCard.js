@@ -9,6 +9,7 @@ import {
   ScrollView,
   Animated,
   ActivityIndicator,
+  TextInput,
   Alert,
   PanResponder,
   Modal,
@@ -21,7 +22,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library/legacy";
 import { getCurrentUser, listFriends, sendShare } from "../services/shareClient";
-import { addDownload, isDownloaded } from "../data/libraryStorage";
+import { addDownload, isDownloaded, getPlaylists, createPlaylist, addTrackToPlaylist } from "../data/libraryStorage";
 import { buildLibraryFilename, B24_ALBUM_NAME } from "../utils/libraryFileNaming";
 import { gatewayHeaders } from "../services/apiClient";
 import { fetchLyrics, activeLyricIndex, saveLyrics } from "../services/lyricsClient";
@@ -89,8 +90,34 @@ export default function PlayerCard({
   queue,
   queueIndex,
   onPlayQueueItem,
+  onRemoveQueueItem,
+  onClearQueue,
 }) {
   const [equalizerVisible, setEqualizerVisible] = useState(false);
+  const openPlaylistPicker = async () => {
+    const list = await getPlaylists();
+    setPlaylists(list || []);
+    setNewPlaylistName("");
+    setPlaylistPicker(true);
+  };
+
+  const handleAddToPlaylist = async (playlistId) => {
+    if (!track?.id) return;
+    await addTrackToPlaylist(playlistId, track.id);
+    setPlaylistPicker(false);
+  };
+
+  const handleCreateAndAdd = async () => {
+    const name = newPlaylistName.trim();
+    if (!name || !track?.id) return;
+    const pl = await createPlaylist(name);
+    await addTrackToPlaylist(pl.id, track.id);
+    setPlaylistPicker(false);
+  };
+
+  const [playlistPicker, setPlaylistPicker] = useState(false);
+  const [playlists, setPlaylists] = useState([]);
+  const [newPlaylistName, setNewPlaylistName] = useState("");
 
   const { width: W, height: H } = useWindowDimensions();
   const topPad = (StatusBar.currentHeight || 28) + 6;
@@ -829,6 +856,11 @@ export default function PlayerCard({
           onLayout={() => scrollRef.current?.scrollTo({ x: panel * W, animated: false })}
           onMomentumScrollEnd={(e) => setPanel(Math.round(e.nativeEvent.contentOffset.x / W))}
         >
+          
+        <TouchableOpacity onPress={openPlaylistPicker} style={{ paddingVertical: 8 }}>
+          <Text style={{ color: C.accentText || "#FF7A3D", fontSize: 14 }}>Add to playlist</Text>
+        </TouchableOpacity>
+
           {/* Up next */}
           <View style={[styles.cardPage, { width: W }]}>
             {!queue || queue.length === 0 ? (
@@ -840,6 +872,9 @@ export default function PlayerCard({
                 contentContainerStyle={{ paddingBottom: 120 }}
                 showsVerticalScrollIndicator={false}
               >
+                <TouchableOpacity onPress={onClearQueue} style={{ alignSelf: "flex-end", paddingVertical: 8, paddingHorizontal: 4 }}>
+                  <Text style={{ color: C.accentText || "#FF7A3D", fontSize: 13 }}>Clear</Text>
+                </TouchableOpacity>
                 {queue.map((q, i) => (
                   <TouchableOpacity
                     key={`${q.provider}-${q.id}-${i}`}
@@ -858,6 +893,13 @@ export default function PlayerCard({
                       <Text style={styles.rowArtist} numberOfLines={1}>{q.artist}</Text>
                     </View>
                     {i === queueIndex && <Ionicons name="volume-high" size={18} color={C.accentText} />}
+                    <TouchableOpacity
+                      onPress={() => onRemoveQueueItem && onRemoveQueueItem(i)}
+                      style={{ padding: 8 }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="close" size={18} color="#888" />
+                    </TouchableOpacity>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -1088,6 +1130,33 @@ export default function PlayerCard({
     </>
   );
 }
+
+
+      <Modal visible={playlistPicker} transparent animationType="fade" onRequestClose={() => setPlaylistPicker(false)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 }} activeOpacity={1} onPress={() => setPlaylistPicker(false)}>
+          <View style={{ backgroundColor: "#1c1c1e", borderRadius: 16, padding: 16 }} onStartShouldSetResponder={() => true}>
+            <Text style={{ color: "#fff", fontSize: 18, marginBottom: 12 }}>Add to playlist</Text>
+            <TextInput
+              value={newPlaylistName}
+              onChangeText={setNewPlaylistName}
+              placeholder="New playlist name"
+              placeholderTextColor="#888"
+              style={{ color: "#fff", borderWidth: 1, borderColor: "#333", borderRadius: 8, padding: 10, marginBottom: 8 }}
+            />
+            <TouchableOpacity onPress={handleCreateAndAdd} style={{ paddingVertical: 10 }}>
+              <Text style={{ color: "#FF7A3D" }}>Create and add</Text>
+            </TouchableOpacity>
+            {playlists.map((pl) => (
+              <TouchableOpacity key={pl.id} onPress={() => handleAddToPlaylist(pl.id)} style={{ paddingVertical: 10 }}>
+                <Text style={{ color: "#fff" }}>{pl.name}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity onPress={() => setPlaylistPicker(false)} style={{ paddingVertical: 10 }}>
+              <Text style={{ color: "#888" }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
 const styles = StyleSheet.create({
   root: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.bg },

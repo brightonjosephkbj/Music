@@ -56,7 +56,19 @@ async function fillThumbnails(assets, thumbs) {
 // just falls back to whatever parseLibraryFilename does with an arbitrary
 // filename.
 
+function isJunkFilename(filename) {
+  const name = (filename || "").toLowerCase();
+  if (!name) return true;
+  if (name.includes("b24") || name.includes("obsidian")) return false;
+  const junk = [
+    "whatsapp", "voice", "aud-", "ptt-", "screen", "recording",
+    "call_rec", "trim", "cache", "tmp", "temp", ".opus",
+  ];
+  return junk.some((k) => name.includes(k));
+}
+
 function toLibraryItem(asset, type, artwork = null) {
+  if (isJunkFilename(asset.filename)) return null;
   const { title, artist } = parseLibraryFilename(asset.filename);
   // Skip obvious junk (voice notes, screen recordings, etc.) unless the filename
   // matches the app's own library naming pattern.
@@ -101,7 +113,6 @@ export async function scanDeviceMedia() {
   try {
     const permResult = await MediaLibrary.requestPermissionsAsync();
     status = permResult.status;
-    console.log("[scanDeviceMedia] permission status:", status, permResult);
   } catch (err) {
     console.error("[scanDeviceMedia] requestPermissionsAsync threw:", err);
     return { granted: false, audio: [], video: [], error: `Permission request failed: ${err.message}` };
@@ -117,17 +128,9 @@ export async function scanDeviceMedia() {
       MediaLibrary.getAssetsAsync({ mediaType: MediaLibrary.MediaType.video, first: 2000 }),
     ]);
 
-    console.log(
-      "[scanDeviceMedia] found",
-      audioResult.assets.length,
-      "audio and",
-      videoResult.assets.length,
-      "video assets on device"
-    );
-
     const thumbs = await loadThumbs();
-    const audio = audioResult.assets.map((a) => toLibraryItem(a, "audio"));
-    const video = videoResult.assets.map((a) => toLibraryItem(a, "video", thumbs[a.id] || null));
+    const audio = audioResult.assets.map((a) => toLibraryItem(a, "audio")).filter(Boolean);
+    const video = videoResult.assets.map((a) => toLibraryItem(a, "video", thumbs[a.id] || null)).filter(Boolean);
     fillThumbnails(videoResult.assets, thumbs).catch(() => {});
     AsyncStorage.setItem(CACHE_KEY, JSON.stringify({ audio, video })).catch(() => {});
     return { granted: true, audio, video, error: null };
