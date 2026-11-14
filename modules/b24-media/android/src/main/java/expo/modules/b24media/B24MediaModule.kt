@@ -1,6 +1,8 @@
 package expo.modules.b24media
 
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -11,8 +13,6 @@ import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import expo.modules.kotlin.Promise
-import expo.modules.kotlin.Queues
-import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -20,6 +20,7 @@ import java.io.File
 @OptIn(UnstableApi::class)
 class B24MediaModule : Module() {
   private val running = mutableSetOf<Transformer>()
+  private val mainHandler = Handler(Looper.getMainLooper())
 
   private fun toUri(p: String): Uri =
     if (p.startsWith("file://") || p.startsWith("content://")) Uri.parse(p)
@@ -37,52 +38,62 @@ class B24MediaModule : Module() {
       if (ctx == null) {
         promise.reject("E_NO_CONTEXT", "No Android context available", null)
       } else {
+        // Media3 Transformer must be created and started on a thread with a Looper.
+        mainHandler.post {
+          try {
+            val outFile = File(toPath(outputPath))
+            outFile.parentFile?.mkdirs()
+            if (outFile.exists()) outFile.delete()
+
+            val item = EditedMediaItem.Builder(MediaItem.fromUri(toUri(inputPath))).build()
+            lateinit var transformer: Transformer
+            transformer = Transformer.Builder(ctx)
+              .setVideoMimeType(MimeTypes.VIDEO_H264)
+              .setAudioMimeType(MimeTypes.AUDIO_AAC)
+              .addListener(object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                  running.remove(transformer)
+                  promise.resolve(outFile.absolutePath)
+                }
+
+                override fun onError(
+                  composition: Composition,
+                  exportResult: ExportResult,
+                  exportException: ExportException
+                ) {
+                  running.remove(transformer)
+                  promise.reject("E_CONVERT", exportException.message ?: "conversion failed", exportException)
+                }
+              })
+              .build()
+            running.add(transformer)
+            transformer.start(item, outFile.absolutePath)
+          } catch (e: Exception) {
+            promise.reject("E_START", e.message ?: "could not start conversion", e)
+          }
+        }
+      }
+      Unit
+    }
+
+    // Converts m4a/aac/mp3 audio to mp3 with the Rust encoder (native/b24audio).
+    AsyncFunction("audioToMp3") { inputPath: String, outputPath: String, kbps: Int, promise: Promise ->
+      Thread {
         try {
           val outFile = File(toPath(outputPath))
           outFile.parentFile?.mkdirs()
           if (outFile.exists()) outFile.delete()
-
-          val item = EditedMediaItem.Builder(MediaItem.fromUri(toUri(inputPath))).build()
-          lateinit var transformer: Transformer
-          transformer = Transformer.Builder(ctx)
-            .setVideoMimeType(MimeTypes.VIDEO_H264)
-            .setAudioMimeType(MimeTypes.AUDIO_AAC)
-            .addListener(object : Transformer.Listener {
-              override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                running.remove(transformer)
-                promise.resolve(outFile.absolutePath)
-              }
-
-              override fun onError(
-                composition: Composition,
-                exportResult: ExportResult,
-                exportException: ExportException
-              ) {
-                running.remove(transformer)
-                promise.reject("E_CONVERT", exportException.message ?: "conversion failed", exportException)
-              }
-            })
-            .build()
-          running.add(transformer)
-          transformer.start(item, outFile.absolutePath)
-        } catch (e: Exception) {
-          promise.reject("E_START", e.message ?: "could not start conversion", e)
+          val msg = B24Audio().nativeAudioToMp3(toPath(inputPath), outFile.absolutePath, kbps)
+          if (msg.isEmpty()) {
+            promise.resolve(outFile.absolutePath)
+          } else {
+            promise.reject("E_AUDIO", msg, null)
+          }
+        } catch (t: Throwable) {
+          promise.reject("E_AUDIO", t.message ?: "audio conversion failed", t)
         }
-      }
-    }.runOnQueue(Queues.MAIN)
-
-    // Converts m4a/aac/mp3 audio to mp3 with the Rust encoder.
-    AsyncFunction("audioToMp3") { inputPath: String, outputPath: String, kbps: Int ->
-      val outFile = File(toPath(outputPath))
-      outFile.parentFile?.mkdirs()
-      if (outFile.exists()) outFile.delete()
-      val msg = try {
-        B24Audio().nativeAudioToMp3(toPath(inputPath), outFile.absolutePath, kbps)
-      } catch (e: UnsatisfiedLinkError) {
-        throw CodedException("E_NO_LIB", "Rust audio library is not in this build", e)
-      }
-      if (msg.isNotEmpty()) throw CodedException("E_AUDIO", msg, null)
-      outFile.absolutePath
-    }.runOnQueue(Queues.DEFAULT)
+      }.start()
+      Unit
+    }
   }
 }
