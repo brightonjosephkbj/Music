@@ -3,6 +3,7 @@ name: Obsidian Android validation and release
 on:
   push:
     branches: [main, native-media]
+    tags: ["release-*"]
   workflow_dispatch:
     inputs:
       publish_release:
@@ -41,7 +42,7 @@ jobs:
 
   build_apk:
     name: Build debug test APK (not for distribution)
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/release-')
     needs: validate
     runs-on: ubuntu-latest
     steps:
@@ -93,7 +94,7 @@ jobs:
 
   release:
     name: Build and publish signed Obsidian APK
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
+    if: (github.event_name == 'workflow_dispatch' && inputs.publish_release == true) || startsWith(github.ref, 'refs/tags/release-')
     needs: validate
     runs-on: ubuntu-latest
     permissions:
