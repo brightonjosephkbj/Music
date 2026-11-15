@@ -152,6 +152,9 @@ jobs:
           org.gradle.workers.max=2
           org.gradle.parallel=false
           kotlin.daemon.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m
+          android.enableMinifyInReleaseBuilds=false
+          android.enableProguardInReleaseBuilds=false
+          android.enableShrinkResourcesInReleaseBuilds=false
           PROPS
 
       - name: Check secrets and decode keystore
