@@ -261,16 +261,12 @@ jobs:
 
           "$APKSIGNER" verify --verbose --print-certs "$APK"
 
-          APK_CERT=$("$APKSIGNER" verify --print-certs "$APK" 2>&1 |
-            awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}' |
-            tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')
+          APK_OUT="$("$APKSIGNER" verify --print-certs "$APK" 2>&1)"
+          APK_CERT="$(printf '%s\n' "$APK_OUT" | grep -i 'certificate SHA-256 digest' | grep -oE '[0-9A-Fa-f]{64}' | head -n1 | tr 'a-f' 'A-F' || true)"
 
-          KEY_CERT=$(keytool -list -v \
-            -keystore app/release.keystore \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-            -alias "$ANDROID_KEY_ALIAS" 2>&1 |
-            awk -F': ' '/SHA256:/ {print $2; exit}' |
-            tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')
+          KEY_OUT="$(keytool -list -v -keystore app/release.keystore -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" 2>&1 || true)"
+          KEY_CERT="$(printf '%s\n' "$KEY_OUT" | grep -E 'SHA-?256:' | grep -oE '([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}' | head -n1 | tr -d ':' | tr 'a-f' 'A-F' || true)"
+          echo "APK cert length: ${#APK_CERT}, keystore cert length: ${#KEY_CERT}"
 
           if [ -z "$APK_CERT" ] || [ -z "$KEY_CERT" ]; then
             echo "::error::Could not retrieve signing certificate fingerprints."
