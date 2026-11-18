@@ -1,7 +1,8 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View, Text, TouchableOpacity, Image, FlatList, RefreshControl, StyleSheet,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useDownloads } from "../../context/DownloadsContext";
 import { reportScrollY } from "../../utils/shellScroll";
 
@@ -23,6 +24,20 @@ export default function LibraryDownloadsScreen({
   onRefresh,
 }) {
   const { activeDownloads, pauseDownload, resumeDownload, cancelDownload } = useDownloads();
+
+  // Newest first by default (flip with the toggle). Items with no date keep their
+  // saved order, where later = newer.
+  const [newestFirst, setNewestFirst] = useState(true);
+  const sorted = useMemo(() => {
+    const list = (downloads || []).map((d, i) => ({ d, i }));
+    list.sort((a, b) => {
+      const ta = a.d.addedAt || 0;
+      const tb = b.d.addedAt || 0;
+      const diff = ta !== tb ? ta - tb : a.i - b.i; // oldest -> newest
+      return newestFirst ? -diff : diff;
+    });
+    return list.map((x) => x.d);
+  }, [downloads, newestFirst]);
   const activeList = Array.from(activeDownloads.values());
 
   const header = activeList.length > 0 ? (
@@ -63,7 +78,7 @@ export default function LibraryDownloadsScreen({
         style={styles.row}
         onPress={() => {
           if (item.type === "image") return onOpenImage && onOpenImage(item);
-          if (onTrackPress) onTrackPress(item, downloads);
+          if (onTrackPress) onTrackPress(item, sorted);
         }}
         onLongPress={(evt) => onItemMenu && onItemMenu(evt, item)}
         delayLongPress={300}
@@ -80,16 +95,30 @@ export default function LibraryDownloadsScreen({
         )}
       </TouchableOpacity>
     ),
-    [downloads, onTrackPress, onItemMenu, onOpenImage]
+    [sorted, onTrackPress, onItemMenu, onOpenImage]
   );
+
+  const sortRow = sorted.length > 1 ? (
+    <View style={styles.sortRow}>
+      <TouchableOpacity
+        onPress={() => setNewestFirst((v) => !v)}
+        style={styles.sortBtn}
+        activeOpacity={0.8}
+        accessibilityLabel="Change sort order"
+      >
+        <Ionicons name={newestFirst ? "arrow-down" : "arrow-up"} size={14} color="#fff" />
+        <Text style={styles.sortText}>{newestFirst ? "Newest first" : "Oldest first"}</Text>
+      </TouchableOpacity>
+    </View>
+  ) : null;
 
   return (
     <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
-      data={downloads}
+      data={sorted}
       keyExtractor={(item) => item.id}
       renderItem={renderRow}
       contentContainerStyle={[styles.listContent, { paddingBottom: 170 }]}
-      ListHeaderComponent={header}
+      ListHeaderComponent={<>{sortRow}{header}</>}
       ListEmptyComponent={() => (
         <View style={{ padding: 32, alignItems: "center" }}>
           <Text style={{ color: "#aaa", fontSize: 16, textAlign: "center" }}>{"No downloads yet.\nSearch or paste a link to add music."}</Text>
@@ -108,6 +137,13 @@ const GLASS_BG = "rgba(255,255,255,0.08)";
 const GLASS_BORDER = "rgba(255,255,255,0.15)";
 
 const styles = StyleSheet.create({
+  sortRow: { flexDirection: "row", marginBottom: 8 },
+  sortBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)",
+  },
+  sortText: { color: "#fff", fontSize: 12, fontWeight: "600" },
   row: { flexDirection: "row", alignItems: "center", paddingVertical: 10 },
   rowArt: { width: 48, height: 48, borderRadius: 4, backgroundColor: GLASS_BG, marginRight: 12 },
   rowTextWrap: { flex: 1, marginRight: 10 },

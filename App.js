@@ -3,10 +3,11 @@ import "react-native-gesture-handler"; // must be the very first import, before 
 
 import React, { useState, useEffect, useRef } from "react";
 import { StatusBar } from "expo-status-bar";
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, ToastAndroid, Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AppShell from "./app/AppShell";
-import { NavigationContainer } from "@react-navigation/native";
+import { NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
+const tabsNavRef = createNavigationContainerRef();
 import MainTabs from "./app/MainTabs";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import HomeScreen from "./screens/HomeScreen";
@@ -293,6 +294,7 @@ export default function App() {
 
   const [playerExpanded, setPlayerExpanded] = useState(false); // State A vs State B
   const [shuffleOn, setShuffleOn] = useState(false);
+  const [repeatMode, setRepeatMode] = useState("off"); // "off" | "all" | "one"
 
   // The queue nowPlaying was picked from, plus its index in that queue.
   // Whatever screen starts playback (Home's trending row, Library, a search
@@ -302,6 +304,9 @@ export default function App() {
   const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(-1);
   const originalQueueRef = useRef(null);
+  // Keys of songs added with "Play next", in the order they should play.
+  const priorityKeysRef = useRef([]);
+  const trackKey = (t) => `${t.provider}-${t.id}`;
 
   // Single playback engine instance, lifted here so both the mini
   // disc/video-box (in AppShell) and the expanded Player/full-screen video
@@ -318,7 +323,13 @@ export default function App() {
     if (finishedTrackKey) {
       if (lastAutoAdvanceTrack.current !== finishedTrackKey) {
         lastAutoAdvanceTrack.current = finishedTrackKey;
-        nextTrack();
+        if (repeatMode === "one") {
+          // repeat one: start the same song again instead of moving on
+          try { engine.seekTo(0); } catch {}
+          try { engine.play(); } catch {}
+        } else {
+          nextTrack("auto");
+        }
       }
     } else {
       lastAutoAdvanceTrack.current = null;
@@ -356,6 +367,16 @@ export default function App() {
     }
   };
 
+  // One button cycles: in order -> shuffle -> repeat all -> repeat one -> in order
+  const cyclePlayMode = () => {
+    let label;
+    if (shuffleOn) { toggleShuffle(false); setRepeatMode("all"); label = "Repeat all"; }
+    else if (repeatMode === "off") { toggleShuffle(true); label = "Shuffle"; }
+    else if (repeatMode === "all") { setRepeatMode("one"); label = "Repeat song"; }
+    else { setRepeatMode("off"); label = "Play in order"; }
+    if (Platform.OS === "android") ToastAndroid.show(label, ToastAndroid.SHORT);
+  };
+
   // Tapping a song in Up Next jumps within the queue; anything else starts fresh.
   const playFromQueue = (track, src) => {
     if (src && src.length) return playTrack(track, src);
@@ -370,6 +391,12 @@ export default function App() {
   // single-track queue of just that one track.
   const playTrack = (track, sourceQueue) => {
     if (!track) return;
+    // "Play next" from a menu: queue it after the current song instead of starting it now
+    if (sourceQueue && sourceQueue.playNext) {
+      playNext(track);
+      return;
+    }
+    priorityKeysRef.current = []; // a fresh list was started
     const nextQueue = sourceQueue && sourceQueue.length ? sourceQueue : [track];
     const idx = nextQueue.findIndex(
       (t) => t.provider === track.provider && t.id === track.id
@@ -407,8 +434,18 @@ export default function App() {
 
   // Wrap around at both ends, like most music players. No-op if there's
   // no queue yet (nothing has been played).
-  const nextTrack = () => {
+  const nextTrack = (how) => {
     if (!queue.length) return;
+    // Songs added with "Play next" always go first (even when shuffle is on)
+    while (priorityKeysRef.current.length) {
+      const key = priorityKeysRef.current.shift();
+      let idx = -1;
+      for (let i = queueIndex + 1; i < queue.length; i++) {
+        if (trackKey(queue[i]) === key) { idx = i; break; }
+      }
+      if (idx < 0) idx = queue.findIndex((t, i) => i !== queueIndex && trackKey(t) === key);
+      if (idx >= 0) { playAtIndex(idx); return; }
+    }
     if (shuffleOn && queue.length > 1) {
       let idx;
       do {
@@ -416,6 +453,9 @@ export default function App() {
       } while (idx === queueIndex);
       playAtIndex(idx);
     } else {
+      // In order (no repeat) the queue stops after the last song when it ends by itself
+      const atEnd = queueIndex >= queue.length - 1;
+      if (atEnd && how === "auto" && repeatMode === "off") return;
       playAtIndex((queueIndex + 1) % queue.length);
     }
   };
@@ -531,12 +571,29 @@ export default function App() {
 
   const playNext = (track) => {
     if (!track) return;
+    // Nothing playing yet: just play it
+    if (!nowPlaying || queue.length === 0) {
+      playTrack(track);
+      return;
+    }
+    // Go after the current song and after any earlier "Play next" songs, so
+    // several of them play in the order you added them.
+    let at = Math.max(queueIndex, 0) + 1;
+    while (at < queue.length && priorityKeysRef.current.includes(trackKey(queue[at]))) at++;
     setQueue((q) => {
       const next = [...q];
-      const at = Math.max(queueIndex + 1, 0);
-      next.splice(at, 0, track);
+      next.splice(Math.min(at, next.length), 0, track);
       return next;
     });
+    // keep the un-shuffled order in sync too
+    if (originalQueueRef.current) {
+      const o = [...originalQueueRef.current];
+      const ci = o.findIndex((t) => t.provider === nowPlaying.provider && t.id === nowPlaying.id);
+      o.splice(ci < 0 ? o.length : ci + 1, 0, track);
+      originalQueueRef.current = o;
+    }
+    priorityKeysRef.current = [...priorityKeysRef.current, trackKey(track)];
+    if (Platform.OS === "android") ToastAndroid.show("Playing next", ToastAndroid.SHORT);
   };
 
   const addToQueue = (track) => {
@@ -545,11 +602,17 @@ export default function App() {
   };
 
   const removeAt = (index) => {
+    const removed = queue[index];
+    if (removed) {
+      const pi = priorityKeysRef.current.indexOf(trackKey(removed));
+      if (pi >= 0) priorityKeysRef.current.splice(pi, 1);
+    }
     setQueue((q) => q.filter((_, i) => i !== index));
     setQueueIndex((i) => (index < i ? i - 1 : i));
   };
 
   const clearQueue = () => {
+    priorityKeysRef.current = [];
     setQueue(nowPlaying ? [nowPlaying] : []);
     setQueueIndex(nowPlaying ? 0 : -1);
   };
@@ -562,7 +625,11 @@ export default function App() {
   const collapsePlayer = () => setPlayerExpanded(false);
 
   const stablePlayTrack = useStableFn(playTrack);
-  const stableGoSearch = useStableFn(() => setActiveNav("search"));
+  const stableGoSearch = useStableFn(() => {
+    setActiveDrawerScreen(null);
+    setSelectedShareFriend(null);
+    if (tabsNavRef.isReady()) tabsNavRef.navigate("Search");
+  });
   const stableGoMostPlayed = useStableFn(() => goToDrawerScreen("mostPlayed"));
 
   let content;
@@ -588,7 +655,7 @@ export default function App() {
     content = <RecentScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "mostPlayed") {
     content = <MostPlayedScreen onTrackPress={playTrack} onBack={backFromDrawerScreen} />;
-  } else if (false && activeDrawerScreen === "aiChat") {
+  } else if (activeDrawerScreen === "aiChat") {
     content = <AIChatScreen onClose={backFromDrawerScreen} />;
   } else if (activeDrawerScreen === "inbox") {
     content = selectedShareFriend ? (
@@ -613,19 +680,17 @@ export default function App() {
         onBack={backFromDrawerScreen}
       />
     );
-  } else if (!activeDrawerScreen) {
-    // Main tabs stay mounted — this removes the lag
+  } else if (activeDrawerScreen === "settings") {
     content = (
-      <NavigationContainer independent>
-        <MainTabs
-          playTrack={stablePlayTrack}
-          goToDrawerScreen={goToDrawerScreen}
-          nowPlaying={nowPlaying}
-          engine={engine}
-          onSearchPress={() => setActiveNav("search")}
-          onMostPlayedPress={stableGoMostPlayed}
-        />
-      </NavigationContainer>
+      <SettingsScreen
+        authUser={authUser}
+        onSignOutPress={handleSignOut}
+        onBackPress={backFromDrawerScreen}
+        onProfileUpdate={async (patch) => {
+          const updated = await updateStoredAuth(patch);
+          if (updated) setAuthUser(updated);
+        }}
+      />
     );
   } else if (activeNav === "settings") {
     content = (
@@ -639,6 +704,21 @@ export default function App() {
       />
     );
   }
+
+  // Tabs are ALWAYS mounted; drawer pages (settings, AI, inbox...) are drawn over them.
+  const tabsEl = (
+    <NavigationContainer independent ref={tabsNavRef}>
+      <MainTabs
+        playTrack={stablePlayTrack}
+        goToDrawerScreen={goToDrawerScreen}
+        nowPlaying={nowPlaying}
+        engine={engine}
+        onSearchPress={stableGoSearch}
+        onMostPlayedPress={stableGoMostPlayed}
+        onTabPress={backFromDrawerScreen}
+      />
+    </NavigationContainer>
+  );
 
   const isVideo = nowPlaying?.type === "video";
 
@@ -677,8 +757,9 @@ export default function App() {
           onCollapsePress={collapsePlayer}
           onSkipNext={nextTrack}
           onSkipPrev={prevTrack}
+          overlay={activeDrawerScreen ? content : null}
         >
-          {content}
+          {tabsEl}
         </AppShell>
 
       {playerExpanded && nowPlaying && !isVideo && (
@@ -691,6 +772,8 @@ export default function App() {
           onPlayTrack={playFromQueue}
           shuffleOn={shuffleOn}
           onShuffleToggle={toggleShuffle}
+          playMode={shuffleOn ? "shuffle" : repeatMode}
+          onCycleMode={cyclePlayMode}
           queue={queue}
           queueIndex={queueIndex}
           onRemoveQueueItem={removeAt}

@@ -25,6 +25,7 @@ import useSharedSongSlide from "../hooks/useSharedSongSlide";
 import { useDownloads as useShareDownloads } from "../context/DownloadsContext";
 import { markSharesSeen } from "../services/shareClient";
 import AnalogClock from "../components/AnalogClock";
+import ObsidianLogo from "../components/ObsidianLogo";
 import MoviesRow from "../components/MoviesRow";
 import HomeBackground from "../components/home/HomeBackground";
 import { purgeExpiredTrash } from "../data/trash";
@@ -122,7 +123,8 @@ export default function HomeScreen({
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gesture) =>
-        Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+        gesture.x0 > Dimensions.get("window").width - 40 &&
+        gesture.dx < -12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
       onPanResponderMove: (_, gesture) => {
         if (drawerOpen) return; // the drawer's own responder owns the gesture once open
         if (gesture.dx < 0) {
@@ -276,14 +278,14 @@ export default function HomeScreen({
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
         onScroll={(e) => { reportScrollY(e.nativeEvent.contentOffset.y); handleScroll(e); }}
-        scrollEventThrottle={150}
+        scrollEventThrottle={64}
       >
         {/* ---------- Header: avatar + personalized greeting + settings/inbox/recent ---------- */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <Ionicons name="musical-notes" size={26} color="#C89BFF" />
+            <ObsidianLogo size={30} color="#fff" />
             <Text numberOfLines={1} style={{ color: "#fff", fontSize: 20, fontWeight: "800", marginLeft: 8, flexShrink: 1 }}>
-              B24 Music
+              Obsidian
             </Text>
           </View>
           <View style={styles.headerRight}>

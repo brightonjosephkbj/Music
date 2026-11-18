@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Image, Platform } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Image, Platform, Keyboard } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,6 +9,7 @@ import { useDownloads } from "../context/DownloadsContext";
 import { resumeAIPlaylists } from "../services/aiPlaylist";
 import useAppResume from "../hooks/useAppResume";
 import { subscribeScrollY } from "../utils/shellScroll";
+import { TAB_ROW_HEIGHT, TAB_BOTTOM_MIN } from "./MainTabs";
 
 // Docked bottom nav (5 tabs) + mini player that collapses to a shining disc
 // while the user scrolls down and returns when they scroll up.
@@ -61,6 +62,7 @@ const SWIPE_NAV_ENABLED = true;
 
 export default function AppShell({
   children,
+  overlay,
   activeNav,
   screenKey,
   onNavPress,
@@ -76,6 +78,15 @@ export default function AppShell({
   const insets = useSafeAreaInsets();
   const navBottomPad = Math.max(insets.bottom, 16) + 4;
   const navHeight = NAV_ROW_H + navBottomPad;
+  // The tab bar is now always visible (even on Settings / AI / Inbox pages).
+  const tabBarHeight = TAB_ROW_HEIGHT + Math.max(insets.bottom, TAB_BOTTOM_MIN);
+  const [kbVisible, setKbVisible] = useState(false);
+  useEffect(() => {
+    const a = Keyboard.addListener("keyboardDidShow", () => setKbVisible(true));
+    const b = Keyboard.addListener("keyboardDidHide", () => setKbVisible(false));
+    return () => { a.remove(); b.remove(); };
+  }, []);
+  const miniBottom = tabBarHeight + 6;
 
   // Selected-tab entrance animation
   const tabIconScale = useRef(new Animated.Value(1)).current;
@@ -248,17 +259,18 @@ export default function AppShell({
 
   return (
     <View style={styles.root}>
-      <GestureDetector gesture={swipeGesture}>
-      <Animated.View
-        style={[
-          styles.screenArea,
-          { paddingBottom: navHeight - 20 },
-          { opacity: screenOpacity, transform: [{ translateX: screenTranslateX }] },
-        ]}
-      >
+      <View style={styles.screenArea}>
         {children}
-      </Animated.View>
-      </GestureDetector>
+      </View>
+
+      {/* Pages like Settings / AI / Inbox sit on top of the content, ABOVE the tab bar */}
+      {overlay ? (
+        <View
+          style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: kbVisible ? 0 : tabBarHeight, backgroundColor: "#000" }}
+        >
+          {overlay}
+        </View>
+      ) : null}
 
       <LinearGradient
         pointerEvents="none"
@@ -279,7 +291,7 @@ export default function AppShell({
       ) : (
         <>
           {nowPlaying && (
-            <View style={[styles.miniLayer, { bottom: 72 }]} pointerEvents="box-none">
+            <View style={[styles.miniLayer, { bottom: miniBottom }]} pointerEvents="box-none">
               {/* Full mini bar */}
               <Animated.View
                 pointerEvents={collapsed ? "none" : "auto"}

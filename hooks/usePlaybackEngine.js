@@ -73,7 +73,7 @@ export default function usePlaybackEngine(track) {
   const uri = resolveUri(track);
 
   // ---- Audio branch (expo-audio) - created once, idle, no initial source ----
-  const audioPlayer = useAudioPlayer(null, { updateInterval: 250 });
+  const audioPlayer = useAudioPlayer(null, { updateInterval: 500 });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
 
   // ---- Obsidian equalizer: apply settings to the actual Expo Audio player ----

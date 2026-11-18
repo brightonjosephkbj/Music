@@ -18,7 +18,7 @@ import {
   Platform,
   useWindowDimensions,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library/legacy";
 import { getCurrentUser, listFriends, sendShare } from "../services/shareClient";
@@ -86,6 +86,8 @@ export default function PlayerCard({
   onPlayTrack,
   onShuffleToggle,
   shuffleOn: initialShuffleOn,
+  playMode,
+  onCycleMode,
   queue,
   queueIndex,
   onPlayQueueItem,
@@ -254,6 +256,12 @@ export default function PlayerCard({
       cancelled = true;
     };
   }, [track?.id, track?.provider]);
+
+  // Already on the phone = downloaded in the library OR a local file (not a web stream)
+  const isStored =
+    libDownloaded ||
+    !!track?.localUri ||
+    (!!track?.stream_url && !/^https?:\/\//i.test(track.stream_url));
 
   const downloadToLibrary = async () => {
     if (!track || libDownloading || libDownloaded) return;
@@ -725,20 +733,28 @@ export default function PlayerCard({
             <Text style={styles.trackTitle} numberOfLines={1}>{track?.title}</Text>
             <Text style={styles.trackArtist} numberOfLines={1}>{track?.artist}</Text>
           </View>
-          <TouchableOpacity
-            onPress={downloadToLibrary}
-            disabled={libDownloading || libDownloaded}
-            style={styles.iconBtn}
-            accessibilityLabel="Download song"
-          >
-            {libDownloading ? (
-              <ActivityIndicator color={C.ink} size="small" />
-            ) : libDownloaded ? (
-              <Ionicons name="checkmark-circle" size={24} color={C.accent} />
-            ) : (
-              <Ionicons name="download-outline" size={24} color={C.ink} />
-            )}
-          </TouchableOpacity>
+          {isStored ? (
+            <TouchableOpacity
+              onPress={openPlaylistPicker}
+              style={styles.iconBtn}
+              accessibilityLabel="Add to playlist"
+            >
+              <Ionicons name="add-circle-outline" size={26} color={C.ink} />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              onPress={downloadToLibrary}
+              disabled={libDownloading}
+              style={styles.iconBtn}
+              accessibilityLabel="Download song"
+            >
+              {libDownloading ? (
+                <ActivityIndicator color={C.ink} size="small" />
+              ) : (
+                <Ionicons name="download-outline" size={24} color={C.ink} />
+              )}
+            </TouchableOpacity>
+          )}
         </Animated.View>
 
         {!!currentLine && (
@@ -779,8 +795,25 @@ export default function PlayerCard({
         </View>
 
         <View style={styles.controlsRow}>
-          <TouchableOpacity onPress={toggleShuffle} style={styles.iconBtn} accessibilityLabel="Shuffle">
-            <Ionicons name="shuffle" size={23} color={shuffleOn ? C.accentText : C.ink} />
+          <TouchableOpacity
+            onPress={() => onCycleMode && onCycleMode()}
+            style={styles.iconBtn}
+            accessibilityLabel={
+              playMode === "shuffle" ? "Shuffle"
+              : playMode === "all" ? "Repeat all"
+              : playMode === "one" ? "Repeat song"
+              : "Play in order"
+            }
+          >
+            {playMode === "shuffle" ? (
+              <Ionicons name="shuffle" size={23} color={C.accentText} />
+            ) : playMode === "all" ? (
+              <MaterialCommunityIcons name="repeat" size={25} color={C.accentText} />
+            ) : playMode === "one" ? (
+              <MaterialCommunityIcons name="repeat-once" size={25} color={C.accentText} />
+            ) : (
+              <MaterialCommunityIcons name="equal" size={27} color={C.ink} />
+            )}
           </TouchableOpacity>
           <TouchableOpacity onPress={() => onPrev && onPrev()} style={styles.iconBtn} accessibilityLabel="Previous">
             <Ionicons name="play-skip-back" size={30} color={C.ink} />
@@ -855,11 +888,6 @@ export default function PlayerCard({
           onLayout={() => scrollRef.current?.scrollTo({ x: panel * W, animated: false })}
           onMomentumScrollEnd={(e) => setPanel(Math.round(e.nativeEvent.contentOffset.x / W))}
         >
-          
-        <TouchableOpacity onPress={openPlaylistPicker} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: C.accentText || "#FF7A3D", fontSize: 14 }}>Add to playlist</Text>
-        </TouchableOpacity>
-
           {/* Up next */}
           <View style={[styles.cardPage, { width: W }]}>
             {!queue || queue.length === 0 ? (

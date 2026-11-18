@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useCallback, useMemo } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import HomeScreen from "../screens/HomeScreen";
 import LibraryScreen from "../screens/library/LibraryScreen";
@@ -12,6 +13,11 @@ const ACCENT = "#FF7A3D";
 const SURFACE = "#171412";
 const MUTED = "#A8A196";
 
+// Tab bar content height (without system inset). AppShell uses the same value
+// to float the mini player exactly above the bar.
+export const TAB_ROW_HEIGHT = 52;
+export const TAB_BOTTOM_MIN = 4;
+
 export default function MainTabs({
   playTrack,
   goToDrawerScreen,
@@ -19,16 +25,33 @@ export default function MainTabs({
   engine,
   onSearchPress,
   onMostPlayedPress,
+  onTabPress,
 }) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, TAB_BOTTOM_MIN);
+
+  const goSearch = useCallback(() => onSearchPress && onSearchPress(), [onSearchPress]);
+  const libraryEl = useMemo(() => (
+    <LibraryScreen onTrackPress={playTrack} onSearchPress={goSearch} onMostPlayedPress={onMostPlayedPress} />
+  ), [playTrack, goSearch, onMostPlayedPress]);
+  const searchEl = useMemo(() => <SearchScreen onTrackPress={playTrack} />, [playTrack]);
+  const videosEl = useMemo(() => (
+    <LibraryScreen section="Videos" onTrackPress={playTrack} onSearchPress={goSearch} onMostPlayedPress={onMostPlayedPress} />
+  ), [playTrack, goSearch, onMostPlayedPress]);
+  const downloadsEl = useMemo(() => (
+    <LibraryScreen section="Downloads" onTrackPress={playTrack} onSearchPress={goSearch} onMostPlayedPress={onMostPlayedPress} />
+  ), [playTrack, goSearch, onMostPlayedPress]);
+
   return (
     <Tab.Navigator
+      screenListeners={{ tabPress: () => { onTabPress && onTabPress(); } }}
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
           backgroundColor: SURFACE,
           borderTopColor: "rgba(255,255,255,0.08)",
-          height: 64,
-          paddingBottom: 8,
+          height: TAB_ROW_HEIGHT + bottomInset,
+          paddingBottom: bottomInset,
           paddingTop: 6,
         },
         tabBarActiveTintColor: ACCENT,
@@ -50,8 +73,8 @@ export default function MainTabs({
             />
           );
         },
-        lazy: false,
-        unmountOnBlur: false,
+        lazy: true,
+        freezeOnBlur: true,
         animation: "shift",
         tabBarHideOnKeyboard: true,
       })}
@@ -73,41 +96,10 @@ export default function MainTabs({
         )}
       </Tab.Screen>
 
-      <Tab.Screen name="Library">
-        {() => (
-          <LibraryScreen
-            onTrackPress={playTrack}
-            onSearchPress={onSearchPress}
-            onMostPlayedPress={onMostPlayedPress}
-          />
-        )}
-      </Tab.Screen>
-
-      <Tab.Screen name="Search">
-        {() => <SearchScreen onTrackPress={playTrack} />}
-      </Tab.Screen>
-
-      <Tab.Screen name="Videos">
-        {() => (
-          <LibraryScreen
-            section="Videos"
-            onTrackPress={playTrack}
-            onSearchPress={onSearchPress}
-            onMostPlayedPress={onMostPlayedPress}
-          />
-        )}
-      </Tab.Screen>
-
-      <Tab.Screen name="Downloads">
-        {() => (
-          <LibraryScreen
-            section="Downloads"
-            onTrackPress={playTrack}
-            onSearchPress={onSearchPress}
-            onMostPlayedPress={onMostPlayedPress}
-          />
-        )}
-      </Tab.Screen>
+      <Tab.Screen name="Library">{() => libraryEl}</Tab.Screen>
+      <Tab.Screen name="Search">{() => searchEl}</Tab.Screen>
+      <Tab.Screen name="Videos">{() => videosEl}</Tab.Screen>
+      <Tab.Screen name="Downloads">{() => downloadsEl}</Tab.Screen>
     </Tab.Navigator>
   );
 }

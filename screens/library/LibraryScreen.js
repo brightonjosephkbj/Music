@@ -1,3 +1,5 @@
+import { getSharedSong as getSharedSongForGroup, shareKey as groupShareKey } from "../../services/shareDownload";
+import { syncGroupPlaylistTracks } from "../../services/groupPlaylistSync";
 import { friendlyError } from "../../utils/friendlyError";
 import { useRef as __useRef } from "react";
 const LIB_ORCHID = "#FF7A3D";
@@ -18,7 +20,7 @@ import AllSongsSortSheet, { SORT_LABELS } from "../../components/AllSongsSortShe
 import LibraryArtistRow from "../../components/LibraryArtistRow";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { getCachedDeviceMedia } from "../../data/localMediaScanner";
-import { AppState } from "react-native";
+import { AppState, Animated as RNAnimated } from "react-native";
 import LibraryVideosScreen from "./LibraryVideosScreen";
 import LibraryDownloadsScreen from "./LibraryDownloadsScreen";
 import LibraryAllSongsScreen from "./LibraryAllSongsScreen";
@@ -695,7 +697,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
   }, [groupName, groupSelectedFriendIds, groupCreating, loadAll]);
 
   const refreshGroupTracks = useCallback(async (playlistId) => {
-    const tracks = await getGroupPlaylistTracks(playlistId);
+    const tracks = await syncGroupPlaylistTracks(playlistId);
     groupTracksCacheRef.current[playlistId] = tracks;
     setGroupPlaylistTracks(tracks);
     return tracks;
@@ -708,6 +710,75 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
       .filter((m) => !!m.source_url)
       .map((m) => ({ ...m, __alreadyAdded: existingUrls.has(m.source_url) }));
   }, [selectedGroupPlaylist, groupPlaylistTracks, allMedia]);
+
+  const groupMissingTracks = useMemo(() => {
+    if (!selectedGroupPlaylist) return [];
+    const haveUrls = new Set();
+    const haveKeys = new Set();
+    for (const d of downloads || []) {
+      if (d.source_url) haveUrls.add(d.source_url);
+      if (d.type === "audio") haveKeys.add(groupShareKey(d.title, d.artist));
+    }
+    return groupPlaylistTracks.filter(
+      (t) => !(t.source_url && haveUrls.has(t.source_url)) && !haveKeys.has(groupShareKey(t.title, t.artist))
+    );
+  }, [selectedGroupPlaylist, groupPlaylistTracks, downloads]);
+
+  // Match each shared-playlist track to the copy saved on this phone (by source_url, else title+artist).
+  const { groupLocalMap, groupPlayableTracks } = useMemo(() => {
+    const byUrl = new Map();
+    const byKey = new Map();
+    for (const d of downloads || []) {
+      if (d.type === "video") continue;
+      if (d.source_url) byUrl.set(d.source_url, d);
+      if (d.type === "audio") byKey.set(groupShareKey(d.title, d.artist), d);
+    }
+    const map = new Map();
+    const list = [];
+    for (const t of groupPlaylistTracks) {
+      const local =
+        (t.source_url && byUrl.get(t.source_url)) || byKey.get(groupShareKey(t.title, t.artist));
+      if (local) {
+        map.set(t.id, local);
+        list.push(local);
+      }
+    }
+    return { groupLocalMap: map, groupPlayableTracks: list };
+  }, [groupPlaylistTracks, downloads]);
+
+  const [groupMissingBusy, setGroupMissingBusy] = useState(null);
+
+  const downloadGroupMissing = useCallback(async () => {
+    if (groupMissingBusy || groupMissingTracks.length === 0) return;
+    const list = groupMissingTracks;
+    let failed = 0;
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      setGroupMissingBusy(`${i + 1}/${list.length}`);
+      const meta = {
+        title: t.title,
+        artist: t.artist,
+        artwork_url: t.artwork_url,
+        duration: t.duration,
+        source_url: t.source_url,
+      };
+      try {
+        await getSharedSongForGroup(meta);
+      } catch (e) {
+        try {
+          // source_url didn't work: find it by "title artist" instead
+          await getSharedSongForGroup({ ...meta, source_url: null });
+        } catch (e2) {
+          failed++;
+        }
+      }
+    }
+    setGroupMissingBusy(null);
+    try { setDownloads(await getDownloads()); } catch (e) {}
+    if (failed > 0) {
+      Alert.alert("Some songs didn't download", `${failed} of ${list.length} couldn't be downloaded. Tap again to retry.`);
+    }
+  }, [groupMissingBusy, groupMissingTracks]);
 
   const submitGroupAddSongs = useCallback(async () => {
     if (!selectedGroupPlaylist || !groupCurrentUserId || groupAddSelectedIds.size === 0) {
@@ -960,6 +1031,18 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
   );
   const plArtForColor = selectedPlaylist ? getPlaylistArt(selectedPlaylist) : null;
   const plAccent = useArtworkAccent(plArtForColor && plArtForColor.uri, plFallbackAccent);
+  const HERO_H = 460;
+  const heroScrollY = useRef(new RNAnimated.Value(0)).current;
+  const heroTranslate = heroScrollY.interpolate({ inputRange: [0, HERO_H], outputRange: [0, -HERO_H], extrapolate: "clamp" });
+  const heroScale = heroScrollY.interpolate({ inputRange: [-200, 0], outputRange: [1.4, 1], extrapolate: "clamp" });
+  const heroScroll = useMemo(
+    () => RNAnimated.event([{ nativeEvent: { contentOffset: { y: heroScrollY } } }], {
+      useNativeDriver: true,
+      listener: (e) => reportScrollY(e.nativeEvent.contentOffset.y),
+    }),
+    [heroScrollY]
+  );
+  useEffect(() => { heroScrollY.setValue(0); }, [selectedPlaylist && selectedPlaylist.id, heroScrollY]);
 
   const renderVideoTile = useCallback(
     ({ item }) => (
@@ -1080,7 +1163,12 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
               });
               return;
             }
-            if (onTrackPress) onTrackPress(item, groupPlaylistTracks);
+            const local = groupLocalMap.get(item.id);
+            if (!local) {
+              Alert.alert("Not downloaded yet", "Tap the Download link at the top of the playlist to get this song first.");
+              return;
+            }
+            if (onTrackPress) onTrackPress(local, groupPlayableTracks);
           }}
           delayLongPress={300}
         >
@@ -1098,7 +1186,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
         </TouchableOpacity>
       );
     },
-    [groupEditModeActive, groupEditSelectedIds, groupPlaylistTracks, onTrackPress]
+    [groupEditModeActive, groupEditSelectedIds, groupPlaylistTracks, groupLocalMap, groupPlayableTracks, onTrackPress]
   );
 
   const keyExtractor = useCallback((item) => item.id, []);
@@ -1175,19 +1263,10 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
 
     return (
       <View style={styles.plxHeader}>
-        {/* Cover with accent glow */}
-        <View style={[styles.plxCoverWrap, { shadowColor: A.glow, borderColor: A.border }]}>
-          {art ? (
-            <Image source={art} style={styles.plxCover} />
-          ) : (
-            <View style={[styles.plxCover, styles.plxPlaceholder]}>
-              <Ionicons name="musical-notes" size={60} color="rgba(255,255,255,0.4)" />
-            </View>
-          )}
-        </View>
+        <View style={{ height: Math.max(HERO_H - 230, 200) }} />
 
         {/* Title + meta */}
-        <Text style={styles.plxTitle} numberOfLines={2}>{selectedPlaylist.name}</Text>
+        <Text style={[styles.plxTitle, styles.plxTitleHero]} numberOfLines={2}>{selectedPlaylist.name}</Text>
         <View style={styles.plxSourceRow}>
           <View style={[styles.plxDot, { backgroundColor: A.solid }]} />
           <Text style={styles.plxSourceText}>Made for you</Text>
@@ -1305,14 +1384,24 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
               <Ionicons name="pencil" size={20} color="#FFFFFF" />
             </TouchableOpacity>
             <Text style={styles.spotifyMetaInline}>{groupPlaylistTracks.length} tracks</Text>
+            {groupMissingTracks.length > 0 && (
+              <Text
+                onPress={downloadGroupMissing}
+                style={[styles.spotifyMetaInline, { color: "#B388FF" }]}
+              >
+                {groupMissingBusy
+                  ? `  ·  Downloading ${groupMissingBusy}…`
+                  : `  ·  Download ${groupMissingTracks.length} missing`}
+              </Text>
+            )}
           </View>
 
           <View style={styles.spotifyRightActions}>
             <TouchableOpacity
               style={styles.spotifyIconBtn}
               onPress={() => {
-                if (groupPlaylistTracks.length > 0 && onTrackPress) {
-                  const shuffled = [...groupPlaylistTracks].sort(() => Math.random() - 0.5);
+                if (groupPlayableTracks.length > 0 && onTrackPress) {
+                  const shuffled = [...groupPlayableTracks].sort(() => Math.random() - 0.5);
                   onTrackPress(shuffled[0], shuffled);
                 }
               }}
@@ -1323,8 +1412,8 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
             <TouchableOpacity
               style={styles.spotifyPlayBtn}
               onPress={() => {
-                if (groupPlaylistTracks.length > 0 && onTrackPress) {
-                  onTrackPress(groupPlaylistTracks[0], groupPlaylistTracks);
+                if (groupPlayableTracks.length > 0 && onTrackPress) {
+                  onTrackPress(groupPlayableTracks[0], groupPlayableTracks);
                 }
               }}
               activeOpacity={0.8}
@@ -1523,6 +1612,21 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
             colors={[plAccent.tint, "transparent"]}
             style={{ position: "absolute", top: 0, left: 0, right: 0, height: 420 }}
           />
+          {(() => {
+            const heroArt = getPlaylistArt(selectedPlaylist);
+            if (!heroArt) return null;
+            return (
+              <RNAnimated.View
+                pointerEvents="none"
+                style={{ position: "absolute", top: 0, left: 0, right: 0, height: HERO_H, transform: [{ translateY: heroTranslate }, { scale: heroScale }] }}
+              >
+                <Image source={heroArt} resizeMode="cover" style={{ width: "100%", height: "100%" }} />
+                <LinearGradient pointerEvents="none" colors={["rgba(0,0,0,0.65)", "rgba(0,0,0,0)"]} style={{ position: "absolute", top: 0, left: 0, right: 0, height: 150 }} />
+                <LinearGradient pointerEvents="none" colors={["rgba(0,0,0,0.45)", "rgba(0,0,0,0)", "rgba(0,0,0,0.45)"]} locations={[0, 0.5, 1]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={StyleSheet.absoluteFill} />
+                <LinearGradient pointerEvents="none" colors={["rgba(8,10,16,0)", "rgba(8,10,16,0.65)", "#080A10"]} locations={[0, 0.6, 1]} style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 300 }} />
+              </RNAnimated.View>
+            );
+          })()}
         </>
       )}
 
@@ -1647,7 +1751,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
 
 
       {detailMode ? (
-        <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
+        <RNAnimated.FlatList onScroll={selectedPlaylist ? heroScroll : (e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={16}
           data={detailData}
           keyExtractor={selectedGroupPlaylist ? (item) => String(item.id) : keyExtractor}
           renderItem={selectedGroupPlaylist ? renderGroupTrackRow : renderTrackRow}
@@ -1744,7 +1848,7 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
                   } else {
                     setGroupTracksLoading(true);
                     try {
-                      const tracks = await getGroupPlaylistTracks(p.id);
+                      const tracks = await syncGroupPlaylistTracks(p.id);
                       groupTracksCacheRef.current[p.id] = tracks;
                       setGroupPlaylistTracks(tracks);
                     } catch (e) {
@@ -2371,6 +2475,7 @@ const styles = StyleSheet.create({
   },
   plxCover: { width: "100%", height: "100%", borderRadius: 18 },
   plxPlaceholder: { justifyContent: "center", alignItems: "center", backgroundColor: "rgba(255,255,255,0.06)" },
+  plxTitleHero: { fontSize: 34, textShadowColor: "rgba(0,0,0,0.65)", textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 10 },
   plxTitle: { color: "#fff", fontSize: 30, fontWeight: "900", letterSpacing: 0.3 },
   plxSourceRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
   plxDot: { width: 8, height: 8, borderRadius: 4, marginRight: 7 },

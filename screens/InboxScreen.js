@@ -118,11 +118,12 @@ export default function InboxScreen({ onFriendPress, onBack }) { /* inbox_props_
         )}
         <Text style={[styles.headerTitle, { flex: 1 }]}>Inbox</Text>
         <TouchableOpacity
-          style={styles.addButton}
+          style={styles.addPill}
           onPress={() => setSheetOpen(true)}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="add" size={26} color={BG} />
+          <Ionicons name="person-add" size={16} color={BG} />
+          <Text style={styles.addPillText}>Add friend</Text>
         </TouchableOpacity>
       </View>
 
@@ -132,7 +133,14 @@ export default function InboxScreen({ onFriendPress, onBack }) { /* inbox_props_
         </View>
       ) : pendingRequests.length === 0 && friends.length === 0 ? (
         <View style={styles.centerFill}>
-          <Text style={styles.emptyText}>You don't have friends or pending requests</Text>
+          <Ionicons name="people-outline" size={44} color="#8A8A8E" />
+          <Text style={[styles.emptyText, { marginTop: 12, marginBottom: 20 }]}>
+            You don't have friends or pending requests
+          </Text>
+          <TouchableOpacity style={styles.addBigButton} onPress={() => setSheetOpen(true)}>
+            <Ionicons name="person-add" size={20} color={BG} />
+            <Text style={styles.addBigButtonText}>Add a friend</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
@@ -398,6 +406,16 @@ const styles = StyleSheet.create({
   },
   centerFill: { flex: 1, alignItems: "center", justifyContent: "center" },
   emptyText: { color: "#8A8A8E", fontSize: 15 },
+  addPill: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: AMBER, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20,
+  },
+  addPillText: { color: BG, fontWeight: "700", fontSize: 13 },
+  addBigButton: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    backgroundColor: AMBER, paddingHorizontal: 28, paddingVertical: 14, borderRadius: 28,
+  },
+  addBigButtonText: { color: BG, fontWeight: "700", fontSize: 16 },
   friendRow: {
     flexDirection: "row",
     alignItems: "center",

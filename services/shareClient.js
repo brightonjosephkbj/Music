@@ -261,3 +261,16 @@ export async function addGroupPlaylistMembers(playlistId, userId, userIds) {
   if (!res.ok || !data.ok) throw new Error(data.error || "Failed to add members");
   return data.data;
 }
+
+// Catch-up for a shared playlist: ask the server what changed since `since` (last saved version).
+// Returns { version, name, art, full, tracks, removed }.
+// full === true -> replace the local list; otherwise add `tracks` and drop the ids in `removed`.
+export async function getGroupPlaylistSync(playlistId, userId, since = 0) {
+  const res = await fetch(
+    `${API_BASE}/api/db/group-playlists/${playlistId}/sync?since=${since}&user_id=${userId}`,
+    { headers: await authedHeaders() }
+  );
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.ok) throw new Error(json.error || "Failed to sync group playlist");
+  return json.data;
+}
