@@ -1,3 +1,5 @@
+import { togglePlayback } from "../services/playbackBridge";
+import { subscribeDiscTop } from "../services/playerDock";
 import React, { useRef, useEffect, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Image, Platform, Keyboard } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -192,8 +194,26 @@ export default function AppShell({
 
   const spinDeg = discRotation.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
 
+  // Disc: double tap = pause/play, single tap (after 250 ms) = open the player.
+  const discTapTimer = useRef(null);
+  const onDiscPress = () => {
+    if (discTapTimer.current) {
+      clearTimeout(discTapTimer.current);
+      discTapTimer.current = null;
+      togglePlayback();
+      return;
+    }
+    discTapTimer.current = setTimeout(() => {
+      discTapTimer.current = null;
+      onExpandPress();
+    }, 250);
+  };
+
   // Mini player: bar <-> disc, driven by scroll direction
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsedScroll, setCollapsed] = useState(false);
+  const [discTop, setDiscTopOn] = useState(false);
+  useEffect(() => subscribeDiscTop(setDiscTopOn), []);
+  const collapsed = collapsedScroll || discTop;
   const collapse = useRef(new Animated.Value(0)).current;
   const lastY = useRef(0);
 
@@ -291,7 +311,7 @@ export default function AppShell({
       ) : (
         <>
           {nowPlaying && (
-            <View style={[styles.miniLayer, { bottom: miniBottom }]} pointerEvents="box-none">
+            <View style={[styles.miniLayer, discTop ? { top: 0, bottom: 0, left: 0, right: 0 } : { bottom: miniBottom }]} pointerEvents="box-none">
               {/* Full mini bar */}
               <Animated.View
                 pointerEvents={collapsed ? "none" : "auto"}
@@ -333,7 +353,7 @@ export default function AppShell({
               {/* Shining disc */}
               <Animated.View
                 pointerEvents={collapsed ? "auto" : "none"}
-                style={[styles.discDock, { opacity: collapse, transform: [{ scale: discScale }] }]}
+                style={[discTop ? [styles.discDockTop, { top: insets.top + 18 }] : styles.discDock, { opacity: collapse, transform: [{ scale: discScale }] }]}
               >
                 {isVideo ? (
                   <SpringTouchable onPress={onExpandPress} accessibilityLabel="Open player">
@@ -344,7 +364,7 @@ export default function AppShell({
                     )}
                   </SpringTouchable>
                 ) : (
-                  <SpringTouchable onPress={onExpandPress} style={styles.discWrap} accessibilityLabel="Open player">
+                  <SpringTouchable onPress={onDiscPress} style={styles.discWrap} accessibilityLabel="Open player">
                     <Animated.View
                       style={[styles.disc, isPlaying && styles.discPlaying, { transform: [{ rotate: spinDeg }] }]}
                     >
@@ -463,6 +483,7 @@ const styles = StyleSheet.create({
   miniPlay: { width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, marginHorizontal: 2 },
 
   discDock: { position: "absolute", right: 16, bottom: 2, elevation: 8 },
+  discDockTop: { position: "absolute", right: 16, elevation: 8 },
   discWrap: { width: DISC, height: DISC },
   disc: {
     width: DISC, height: DISC, borderRadius: DISC / 2, backgroundColor: "#111",

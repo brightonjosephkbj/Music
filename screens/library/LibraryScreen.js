@@ -746,6 +746,34 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
     return { groupLocalMap: map, groupPlayableTracks: list };
   }, [groupPlaylistTracks, downloads]);
 
+  // While a shared playlist is open: refresh now, every 20s, and when the app comes back.
+  useEffect(() => {
+    if (!selectedGroupPlaylist) return undefined;
+    const pid = selectedGroupPlaylist.id;
+    let alive = true;
+    const refresh = () => {
+      syncGroupPlaylistTracks(pid)
+        .then((fresh) => {
+          if (!alive) return;
+          const old = groupTracksCacheRef.current[pid];
+          if (old && old.length === fresh.length && old.every((t, i) => t.id === fresh[i].id)) return;
+          groupTracksCacheRef.current[pid] = fresh;
+          setGroupPlaylistTracks(fresh);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const timer = setInterval(refresh, 20000);
+    const sub = AppState.addEventListener("change", (st) => {
+      if (st === "active") refresh();
+    });
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [selectedGroupPlaylist]);
+
   const [groupMissingBusy, setGroupMissingBusy] = useState(null);
 
   const downloadGroupMissing = useCallback(async () => {
@@ -1371,29 +1399,28 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
           </Text>
         </View>
 
+        <View style={{ flexDirection: "row", justifyContent: "center", alignItems: "center", marginTop: 6 }}>
+          <Text style={styles.spotifyMetaInline}>
+            {groupPlaylistTracks.length} {groupPlaylistTracks.length === 1 ? "track" : "tracks"}
+          </Text>
+          {groupMissingTracks.length > 0 && (
+            <Text
+              onPress={downloadGroupMissing}
+              style={[styles.spotifyMetaInline, { color: "#B388FF" }]}
+            >
+              {groupMissingBusy
+                ? `  ·  Downloading ${groupMissingBusy}…`
+                : `  ·  Download ${groupMissingTracks.length} missing`}
+            </Text>
+          )}
+        </View>
+
         <View style={styles.spotifyActionBar}>
           <View style={styles.spotifyLeftActions}>
-            <TouchableOpacity
-              style={styles.spotifyIconBtn}
-              onPress={() => {
-                setGroupInfoName(selectedGroupPlaylist.name);
-                setGroupInfoArtUri(selectedGroupPlaylist.art || null);
-                setGroupInfoVisible(true);
-              }}
-            >
-              <Ionicons name="pencil" size={20} color="#FFFFFF" />
+            <TouchableOpacity style={styles.addFriendsPill} onPress={openAddMembers}>
+              <Ionicons name="person-add" size={16} color="#000" />
+              <Text style={styles.addFriendsPillText}>Add friends</Text>
             </TouchableOpacity>
-            <Text style={styles.spotifyMetaInline}>{groupPlaylistTracks.length} tracks</Text>
-            {groupMissingTracks.length > 0 && (
-              <Text
-                onPress={downloadGroupMissing}
-                style={[styles.spotifyMetaInline, { color: "#B388FF" }]}
-              >
-                {groupMissingBusy
-                  ? `  ·  Downloading ${groupMissingBusy}…`
-                  : `  ·  Download ${groupMissingTracks.length} missing`}
-              </Text>
-            )}
           </View>
 
           <View style={styles.spotifyRightActions}>
@@ -1445,6 +1472,20 @@ export default function LibraryScreen({ onMostPlayedPress, onTrackPress, onSearc
             <Ionicons name="create-outline" size={14} color={groupEditModeActive ? "#000" : "#fff"} />
             <Text style={[styles.pillChipText, groupEditModeActive && styles.pillChipTextActive]}>Edit</Text>
           </TouchableOpacity>
+
+          {isOwner && (
+            <TouchableOpacity
+              style={styles.pillChip}
+              onPress={() => {
+                setGroupInfoName(selectedGroupPlaylist.name);
+                setGroupInfoArtUri(selectedGroupPlaylist.art || null);
+                setGroupInfoVisible(true);
+              }}
+            >
+              <Ionicons name="pencil" size={14} color="#fff" />
+              <Text style={styles.pillChipText}>Details</Text>
+            </TouchableOpacity>
+          )}
         </ScrollView>
 
         {groupEditModeActive && groupEditSelectedIds.size > 0 && (
@@ -2831,6 +2872,11 @@ const styles = StyleSheet.create({
   },
   imagePickPreview: { width: 40, height: 40, borderRadius: 8 },
   imagePickText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  addFriendsPill: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#1ED760", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 22,
+  },
+  addFriendsPillText: { color: "#000", fontWeight: "800", fontSize: 13 },
 });
 
 

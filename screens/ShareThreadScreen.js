@@ -1,3 +1,4 @@
+import { setDiscTop } from "../services/playerDock";
 // ---------------------------------------------------------------------------
 // ShareThreadScreen — full share history with ONE friend, both directions
 // (what they sent you + what you sent them), oldest first. Reached by
@@ -20,8 +21,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Image,
-  RefreshControl, TextInput } from "react-native";
+  RefreshControl, TextInput, KeyboardAvoidingView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getCurrentUser, getShareThread, markSharesSeen, sendShare } from "../services/shareClient";
 import { getDownloads } from "../data/libraryStorage";
 import { Animated as ShareAnim, ActivityIndicator as ShareSpinner } from "react-native";
@@ -34,6 +36,7 @@ const BG = "#0B0B0D";
 const CARD_BG = "rgba(255,255,255,0.06)";
 const BORDER = "rgba(255,255,255,0.10)";
 const UNSEEN_DOT = "#3AA76D";
+const cacheKey = (u, f) => "share_thread_v1:" + u + ":" + f;
 
 function Avatar({ letter, url, size = 36 }) {
   if (url) {
@@ -187,6 +190,7 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  useEffect(() => { setDiscTop(true); return () => setDiscTop(false); }, []);
 
   const unseenIdsRef = useRef(new Set());
   const dlHooks = useShareDownloads();
@@ -200,6 +204,9 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
         list.filter((s) => s.direction === "received" && !s.seen).map((s) => s.id)
       );
       setThread(list);
+      if (Array.isArray(list)) {
+        AsyncStorage.setItem(cacheKey(userId, friendId), JSON.stringify(list.slice(-200))).catch(() => {});
+      }
     } catch (e) {
       console.warn("Failed to load share thread:", e.message);
     } finally {
@@ -212,7 +219,17 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
     (async () => {
       const u = await getCurrentUser();
       setUser(u);
-      if (u?.id && friend?.id) await loadThread(u.id, friend.id);
+      if (u?.id && friend?.id) {
+        try {
+          const raw = await AsyncStorage.getItem(cacheKey(u.id, friend.id));
+          const cached = raw ? JSON.parse(raw) : null;
+          if (Array.isArray(cached) && cached.length) {
+            setThread(cached);
+            setLoading(false);
+          }
+        } catch (e) {}
+        await loadThread(u.id, friend.id);
+      }
       else setLoading(false);
     })();
   }, [loadThread, friend?.id]);
@@ -331,7 +348,7 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
   );
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView style={styles.container} behavior="padding" keyboardVerticalOffset={0}>
       <View style={styles.header}>
         {onBack && (
           <TouchableOpacity
@@ -347,13 +364,7 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
           <Text style={styles.headerTitle}>{friend.username || "Friend"}</Text>
           <Text style={styles.headerSubtitle}>{friend.handle}</Text>
         </View>
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={() => setPickerOpen(true)}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="add" size={22} color={BG} />
-        </TouchableOpacity>
+        <View style={{ width: 64 }} />
       </View>
 
       {loading ? (
@@ -420,7 +431,7 @@ export default function ShareThreadScreen({ friend = {}, onBack, onTrackPress })
         fetchVideos={fetchVideos}
         onSend={handleSendShare}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

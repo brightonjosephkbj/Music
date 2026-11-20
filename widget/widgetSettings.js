@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS = {
   showLyric: true,
   showSkip: true,
   customLayout: false,
+  glass: true,
   layouts: {},
 };
 

@@ -9,6 +9,7 @@ import {
 import { DEFAULT_SETTINGS } from "./widgetSettings";
 import { getLayout, pickLayoutKey } from "./widgetLayouts";
 import { renderCustomItems } from "./CustomWidgetLayout";
+import { GlassWidget } from "./GlassWidget";
 
 const JET_BLACK = "#0B0A0F";
 const TEXT_PRIMARY = "#F5F3FA";
@@ -67,6 +68,22 @@ export function NowPlayingWidget({
   const playSize = tiny ? 28 : height > 160 ? 40 : 34;
   const gap = tiny ? 12 : 20;
   const pct = Math.round(Math.max(0, Math.min(1, progress)) * 100);
+
+  if (S.glass && height >= 100 && width >= 200) {
+    return (
+      <GlassWidget
+        title={title}
+        artist={artist}
+        artwork={artwork}
+        progress={progress}
+        isPlaying={isPlaying}
+        lyricLine={lyricLine}
+        width={width}
+        height={height}
+        settings={S}
+      />
+    );
+  }
 
   if (S.customLayout) {
     const items = getLayout(S, pickLayoutKey(width, height));

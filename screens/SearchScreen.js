@@ -834,7 +834,6 @@ export default function SearchScreen({ onTrackPress }) {
 
         {ytResults.length > 0 && (
           <View style={{ marginTop: 20 }}>
-            <Text style={styles.sectionTitle}>From YouTube</Text>
 
             {selectedIds.size > 0 && (
               <View style={styles.batchBar}>

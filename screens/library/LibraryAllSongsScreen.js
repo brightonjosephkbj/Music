@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useMemo } from "react";
 import {
   View, Text, TouchableOpacity, Image, FlatList, RefreshControl, TextInput, StyleSheet,
 } from "react-native";
@@ -6,6 +6,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { SORT_LABELS } from "../../components/AllSongsSortSheet";
 import { smartShuffle } from "../../utils/smartShuffle";
 import { reportScrollY } from "../../utils/shellScroll";
+import AdSlot from "../../src/AdSlot";
+import { useAdsEnabled } from "../../src/adsConfig";
 
 const AS_ACTIVE_BG = "rgba(245,166,35,0.10)";
 const AS_ACTIVE_BORDER = "rgba(245,166,35,0.35)";
@@ -42,8 +44,20 @@ export default function LibraryAllSongsScreen({
   refreshing,
   onRefresh,
 }) {
+  const adsOn = useAdsEnabled();
+  const listData = useMemo(() => {
+    if (!adsOn || searchQuery || !filteredSongs || filteredSongs.length < 8) return filteredSongs;
+    const out = [];
+    filteredSongs.forEach((song, i) => {
+      out.push(song);
+      if (i === 7 || (i > 7 && (i - 7) % 12 === 0)) out.push({ id: "ad-" + i, type: "ad" });
+    });
+    return out;
+  }, [filteredSongs, adsOn, searchQuery]);
+
   const renderRow = useCallback(
     ({ item }) => {
+      if (item.type === "ad") return <AdSlot placement="library" />;
       const isActive = !!currentTrackId && item.id === currentTrackId;
       return (
         <TouchableOpacity
@@ -198,7 +212,7 @@ export default function LibraryAllSongsScreen({
 
   return (
     <FlatList onScroll={(e) => reportScrollY(e.nativeEvent.contentOffset.y)} scrollEventThrottle={32}
-      data={filteredSongs}
+      data={listData}
       keyExtractor={(item) => item.id}
       renderItem={renderRow}
       contentContainerStyle={[styles.listContent, { paddingBottom: 170 }]}

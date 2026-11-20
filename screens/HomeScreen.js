@@ -28,6 +28,8 @@ import AnalogClock from "../components/AnalogClock";
 import ObsidianLogo from "../components/ObsidianLogo";
 import MoviesRow from "../components/MoviesRow";
 import HomeBackground from "../components/home/HomeBackground";
+import AdSlot from "../src/AdSlot";
+import { useAdsEnabled } from "../src/adsConfig";
 import { purgeExpiredTrash } from "../data/trash";
 import PlaylistGrid from "../components/home/HomePlaylistGrid";
 import ArtistsRow from "../components/home/HomeArtistsRow";
@@ -95,6 +97,17 @@ export default function HomeScreen({
   const [loadingMore, setLoadingMore] = useState(false);
   const [displayName, setDisplayName] = useState(null);
   const mixSlide = useHeroMix(onTrackPress);
+  const adsOn = useAdsEnabled();
+  const adSlide = {
+    key: "ad",
+    label: "SPONSORED",
+    title: "Your ad could be here",
+    tagline: "Support Obsidian",
+    colors: ["#1B2A4E", "#2F7BF7"],
+    icon: "open-outline",
+    cta: "Learn more",
+    onPlay: () => {},
+  };
   const annSlide = useAnnouncementSlide();
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [unseenShareCount, setUnseenShareCount] = useState(0);
@@ -318,7 +331,7 @@ export default function HomeScreen({
 
         {/* ---------- Hero card: swipeable featured slides ---------- */}
         {!loading && !error && (
-          <HeroCard slides={[...(annSlide ? [annSlide] : []), ...(sharedSlide ? [sharedSlide] : []), ...buildHeroSlides(tracks, onTrackPress), ...(mixSlide ? [mixSlide] : [])]} />
+          <HeroCard slides={[...(annSlide ? [annSlide] : []), ...(sharedSlide ? [sharedSlide] : []), ...buildHeroSlides(tracks, onTrackPress), ...(mixSlide ? [mixSlide] : []), ...(adsOn ? [adSlide] : [])]} />
         )}
 
         {/* ---------- Action tiles: Paste Link / Downloads / AI Music ---------- */}
@@ -330,6 +343,7 @@ export default function HomeScreen({
 
         {/* ---------- Continue Listening: scrubber card for the last played track ---------- */}
         <ContinueListeningCard nowPlaying={nowPlaying} engine={engine} onTrackPress={onTrackPress} />
+        <AdSlot placement="home" />
 
         <PlaylistGrid onTrackPress={onTrackPress} />
 

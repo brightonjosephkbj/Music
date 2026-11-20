@@ -29,6 +29,19 @@ import HomeBackgroundScreen from "./HomeBackgroundScreen";
 import { NEU, Raised, Inset, NeuRow, NeuButton, RoundButton, SectionTitle } from "../components/Neu";
 import { StoragePage, TrashPage } from "../components/StoragePages";
 import { getDiagnosticsConsent, setDiagnosticsConsent } from "../services/errorReporter";
+import DevAdsHost, { openDevAds } from "../src/DevAdsSwitch";
+
+let _adTaps = 0;
+let _adTimer = null;
+const onVersionRowTap = () => {
+  _adTaps += 1;
+  clearTimeout(_adTimer);
+  _adTimer = setTimeout(() => { _adTaps = 0; }, 2000);
+  if (_adTaps >= 7) {
+    _adTaps = 0;
+    openDevAds();
+  }
+};
 
 const APP_VERSION = appJson.expo.version;
 
@@ -496,6 +509,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
           </Raised>
         )}
 
+        {page === "about" && <DevAdsHost />}
         {page === "permissions" && <PermissionsPage />}
 
         {page === "storage" && <StoragePage onOpenTrash={() => setPage("trash")} />}
@@ -508,6 +522,7 @@ export default function SettingsScreen({ authUser, onSignOutPress, onProfileUpda
                 icon="phone-portrait-outline"
                 title="App version"
                 subtitle={Platform.OS === "ios" ? "iOS" : "Android"}
+                onPress={onVersionRowTap}
                 right={<Text style={st.value}>{APP_VERSION}</Text>}
               />
               <NeuRow
