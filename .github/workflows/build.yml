@@ -300,4 +300,4 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "Obsidian build ${{ github.run_number }}" \
             --generate-notes \
-            --latest
+            --draft
